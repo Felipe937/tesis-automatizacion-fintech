@@ -312,7 +312,7 @@ describe('HTTP Server — src/server.js', () => {
 
       // Con credenciales ficticias, fallará en GraphAuthError (502) o ConfigurationError (500)
       // Lo importante es que NO cuelgue y responda con estructura correcta
-      assert.ok([400, 500, 502].includes(res.statusCode), `Status inesperado: ${res.statusCode}`);
+      assert.ok([500, 502].includes(res.statusCode), `Status inesperado: ${res.statusCode}`);
       assert.equal(res.body.exitoso, false);
       assert.ok(res.body.error.tipo);
       assert.ok(res.body.error.mensaje);
