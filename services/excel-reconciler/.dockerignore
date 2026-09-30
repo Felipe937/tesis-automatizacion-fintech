@@ -1,0 +1,46 @@
+# =============================================================================
+# .dockerignore — excel-reconciler
+# Excluir todo lo que no sea necesario para la imagen de producción
+# =============================================================================
+
+# Dependencias (se instalan en la imagen)
+node_modules/
+
+# Tests y fixtures
+src/__tests__/
+fixtures/
+*.test.js
+
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Archivos de desarrollo
+README.md
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+
+# IDE y OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache

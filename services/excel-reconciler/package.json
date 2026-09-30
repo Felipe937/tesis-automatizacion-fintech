@@ -9,8 +9,10 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "start:server": "node src/server.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test src/__tests__/reconciler.test.js",
+    "dev:server": "node --watch src/server.js",
+    "test": "node --test src/__tests__/reconciler.test.js src/__tests__/server.test.js",
     "lint": "node --check src/**/*.js"
   },
   "dependencies": {
