@@ -1,0 +1,265 @@
+# =============================================================================
+# docker-compose.yml — n8n Fintech Colombia (Self-Hosted / VPS)
+# =============================================================================
+# Cumplimiento: Ley 1581 de 2012 (Protección de Datos Personales - Colombia)
+# Arquitectura: Traefik (Reverse Proxy + TLS) → n8n → PostgreSQL
+# =============================================================================
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# REDES
+# ---------------------------------------------------------------------------
+networks:
+  # Red interna privada: sólo los servicios backend se comunican aquí
+  fintech_internal:
+    driver: bridge
+    internal: true          # sin acceso directo a Internet desde esta red
+
+  # Red pública: Traefik expone puertos 80/443 hacia el exterior
+  fintech_public:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# VOLÚMENES PERSISTENTES
+# Garantizan la soberanía de la información sensible en el host del VPS.
+# Mapear a un directorio externo cifrando el disco del VPS es recomendable.
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-./data/postgres}   # ruta en el host VPS
+
+  n8n_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${N8N_DATA_PATH:-./data/n8n}             # workflows, credenciales cifradas
+
+  traefik_certs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${TRAEFIK_CERTS_PATH:-./data/traefik/certs}  # certificados ACME/TLS
+
+services:
+
+  # ===========================================================================
+  # 1. TRAEFIK — Reverse Proxy + TLS Automático (Let's Encrypt / ACME)
+  # ===========================================================================
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - fintech_public
+    ports:
+      - "80:80"     # HTTP → redirige a HTTPS
+      - "443:443"   # HTTPS/TLS (TLSv1.2 mínimo, preferencia TLSv1.3)
+    volumes:
+      # Acceso de sólo lectura al socket Docker para descubrimiento de servicios
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/letsencrypt
+      - ./config/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./config/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    environment:
+      # Si se usa DNS Challenge (recomendado para Ley 1581 — no expone el servidor):
+      # Descomenta y configura el proveedor DNS correspondiente (Cloudflare, Route53, etc.)
+      # CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+      TRAEFIK_LOG_LEVEL: "INFO"
+    labels:
+      # Habilita Traefik Dashboard (acceso restringido con auth básica)
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.middlewares=auth-dashboard"
+      # Middleware: autenticación básica para el dashboard de Traefik
+      - "traefik.http.middlewares.auth-dashboard.basicauth.users=${TRAEFIK_DASHBOARD_CREDENTIALS}"
+      # Middleware global: cabeceras de seguridad HTTP (HSTS, XSS, etc.)
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.stsPreload=true"
+      - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.security-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()"
+      # Middleware: rate limiting para proteger la instancia n8n
+      - "traefik.http.middlewares.rate-limit.ratelimit.average=100"
+      - "traefik.http.middlewares.rate-limit.ratelimit.burst=50"
+
+  # ===========================================================================
+  # 2. POSTGRESQL — Base de datos persistente de n8n
+  # ===========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: n8n_postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - fintech_internal      # sólo accesible internamente, nunca expuesto
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_fintech}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}            # Obligatorio — ver .env
+      # Requerir SSL en las conexiones a la base de datos
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n_user} -d ${POSTGRES_DB:-n8n_fintech}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Sin exposición de puertos al host: máxima superficie de ataque reducida
+    # Si necesitas acceso externo para admin, usa un túnel SSH: ssh -L 5432:localhost:5432 user@vps
+
+  # ===========================================================================
+  # 3. N8N — Motor de Orquestación / Automatización
+  # ===========================================================================
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "node"              # No ejecutar como root
+    networks:
+      - fintech_internal
+      - fintech_public
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # -----------------------------------------------------------------------
+      # BASE DE DATOS
+      # -----------------------------------------------------------------------
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n_fintech}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n_user}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: public
+
+      # -----------------------------------------------------------------------
+      # URL Y PROTOCOLO
+      # -----------------------------------------------------------------------
+      N8N_HOST: ${DOMAIN_NAME}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://${DOMAIN_NAME}/
+      N8N_EDITOR_BASE_URL: https://${DOMAIN_NAME}/
+
+      # -----------------------------------------------------------------------
+      # AUTENTICACIÓN BÁSICA (Capa de protección mínima requerida)
+      # Para producción se recomienda habilitar también LDAP/SSO o SAML.
+      # -----------------------------------------------------------------------
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+
+      # -----------------------------------------------------------------------
+      # CIFRADO DE CREDENCIALES EN REPOSO (Ley 1581 — Art. 17)
+      # Cada instancia debe tener su propia clave única y robusta (mínimo 32 chars).
+      # -----------------------------------------------------------------------
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # -----------------------------------------------------------------------
+      # SEGURIDAD Y PRIVACIDAD
+      # -----------------------------------------------------------------------
+      N8N_DIAGNOSTICS_ENABLED: "false"          # No enviar telemetría a n8n.io
+      N8N_PERSONALIZATION_ENABLED: "false"      # No recolectar datos de uso
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "true"
+      N8N_HIDE_USAGE_PAGE: "true"
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-90}   # días de retención (Ley 1581)
+
+      # -----------------------------------------------------------------------
+      # CORREO ELECTRÓNICO — Para alertas y notificaciones del sistema
+      # -----------------------------------------------------------------------
+      N8N_EMAIL_MODE: smtp
+      N8N_SMTP_HOST: ${SMTP_HOST}
+      N8N_SMTP_PORT: ${SMTP_PORT:-587}
+      N8N_SMTP_USER: ${SMTP_USER}
+      N8N_SMTP_PASS: ${SMTP_PASS}
+      N8N_SMTP_SENDER: ${SMTP_SENDER}
+      N8N_SMTP_SSL: "false"
+      N8N_SMTP_STARTTLS: "true"
+
+      # -----------------------------------------------------------------------
+      # TIMEZONE — Colombia (UTC-5, sin horario de verano)
+      # -----------------------------------------------------------------------
+      GENERIC_TIMEZONE: America/Bogota
+      TZ: America/Bogota
+
+      # -----------------------------------------------------------------------
+      # RENDIMIENTO Y CONCURRENCIA
+      # -----------------------------------------------------------------------
+      EXECUTIONS_PROCESS: main
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY:-5}
+
+      # -----------------------------------------------------------------------
+      # INTEGRACIÓN: HUBSPOT CRM
+      # (Configurar credencial en n8n UI y referenciar como {{$credentials}})
+      # -----------------------------------------------------------------------
+      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
+      HUBSPOT_PORTAL_ID: ${HUBSPOT_PORTAL_ID}
+
+      # -----------------------------------------------------------------------
+      # INTEGRACIÓN: MAILCHIMP
+      # -----------------------------------------------------------------------
+      MAILCHIMP_API_KEY: ${MAILCHIMP_API_KEY}
+      MAILCHIMP_SERVER_PREFIX: ${MAILCHIMP_SERVER_PREFIX}       # ej: us21
+
+      # -----------------------------------------------------------------------
+      # INTEGRACIÓN: CALENDLY
+      # -----------------------------------------------------------------------
+      CALENDLY_API_KEY: ${CALENDLY_API_KEY}
+      CALENDLY_WEBHOOK_SIGNING_KEY: ${CALENDLY_WEBHOOK_SIGNING_KEY}
+      CALENDLY_ORG_URI: ${CALENDLY_ORG_URI}
+
+      # -----------------------------------------------------------------------
+      # INTEGRACIÓN: MICROSOFT 365 / ONEDRIVE / EXCEL
+      # (OAuth 2.0 con Azure AD — App Registration)
+      # -----------------------------------------------------------------------
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
+      MICROSOFT_REDIRECT_URI: https://${DOMAIN_NAME}/rest/oauth2-credential/callback
+
+    labels:
+      - "traefik.enable=true"
+      # Router HTTPS principal
+      - "traefik.http.routers.n8n.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.n8n.service=n8n"
+      - "traefik.http.routers.n8n.middlewares=security-headers,rate-limit"
+      # Service interno
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+      # Router HTTP → redirige todo a HTTPS (no se sirve contenido por HTTP)
+      - "traefik.http.routers.n8n-http.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.n8n-http.entrypoints=web"
+      - "traefik.http.routers.n8n-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      # Red específica para que Traefik use la pública
+      - "traefik.docker.network=fintech_public"

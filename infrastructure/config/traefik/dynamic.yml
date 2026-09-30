@@ -1,0 +1,97 @@
+# =============================================================================
+# dynamic.yml — Configuración dinámica de Traefik
+# Políticas TLS, cabeceras de seguridad y middleware globales
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# TLS — Política "modern" (TLSv1.2 mínimo, TLSv1.3 preferido)
+# Referencia: Mozilla SSL Configuration Generator (Modern profile)
+# Cumple OWASP TLS Cheat Sheet y estándares bancarios colombianos (SFC)
+# ---------------------------------------------------------------------------
+tls:
+  options:
+    modern:
+      minVersion: VersionTLS12
+      maxVersion: VersionTLS13
+      cipherSuites:
+        # TLSv1.3 (gestionados por Go, no configurables, siempre seguros)
+        # TLSv1.2 — sólo suites con Forward Secrecy (ECDHE) y AEAD
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+      sniStrict: true   # Rechaza conexiones TLS sin SNI
+
+    # Política legacy para integraciones que no soportan TLSv1.3 (ej: algunos SaaS)
+    legacy:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+
+# ---------------------------------------------------------------------------
+# MIDDLEWARES de Seguridad Global
+# ---------------------------------------------------------------------------
+http:
+  middlewares:
+    # -------------------------------------------------------------------------
+    # Cabeceras HTTP de Seguridad — OWASP Secure Headers Project
+    # -------------------------------------------------------------------------
+    security-headers:
+      headers:
+        # HSTS: fuerza HTTPS por 1 año (Ley 1581 — protección en tránsito)
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        # Prevención de ataques
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true                     # Clickjacking protection
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # CSP: política de seguridad de contenido (ajustar según necesidades n8n)
+        contentSecurityPolicy: >-
+          default-src 'self';
+          script-src 'self' 'unsafe-inline' 'unsafe-eval';
+          style-src 'self' 'unsafe-inline';
+          img-src 'self' data: blob: https:;
+          font-src 'self' data:;
+          connect-src 'self' https://api.hubapi.com https://api.mailchimp.com https://api.calendly.com https://graph.microsoft.com;
+          frame-ancestors 'none'
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+        customResponseHeaders:
+          X-Powered-By: ""               # Oculta tecnología del servidor
+          Server: ""                     # No revelar versión del servidor
+
+    # -------------------------------------------------------------------------
+    # Rate Limiting — Protección contra fuerza bruta y DDoS
+    # -------------------------------------------------------------------------
+    rate-limit-global:
+      rateLimit:
+        average: 100    # req/segundo en promedio
+        burst: 200      # pico permitido
+
+    rate-limit-api:
+      rateLimit:
+        average: 30     # Más restrictivo para endpoints de API/webhook
+        burst: 50
+
+    # -------------------------------------------------------------------------
+    # IP Allowlist — (Opcional) Restringir acceso al editor n8n desde IPs conocidas
+    # Descomenta y configura para mayor seguridad (recomendado en producción)
+    # -------------------------------------------------------------------------
+    # ip-allowlist:
+    #   ipAllowList:
+    #     sourceRange:
+    #       - "203.0.113.0/24"   # IP de tu oficina / VPN corporativa
+    #       - "198.51.100.0/24"
+
+    # -------------------------------------------------------------------------
+    # Compresión de respuestas
+    # -------------------------------------------------------------------------
+    compress:
+      compress: {}

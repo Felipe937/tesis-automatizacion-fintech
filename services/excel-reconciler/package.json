@@ -1,0 +1,36 @@
+{
+  "name": "excel-reconciler",
+  "version": "1.0.0",
+  "description": "Servicio de conciliación financiera entre n8n y Excel/OneDrive via Microsoft Graph API",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test src/__tests__/reconciler.test.js",
+    "lint": "node --check src/**/*.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "axios": "^1.7.7",
+    "axios-retry": "^4.5.0",
+    "decimal.js": "^10.4.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5"
+  },
+  "keywords": [
+    "fintech",
+    "excel",
+    "microsoft-graph",
+    "n8n",
+    "reconciliation",
+    "investment"
+  ],
+  "author": "Tesis Automatización Fintech — Colombia",
+  "license": "MIT"
+}
