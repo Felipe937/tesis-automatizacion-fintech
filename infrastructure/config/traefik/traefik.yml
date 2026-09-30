@@ -32,8 +32,6 @@ entryPoints:
       tls:
         certResolver: letsencrypt
         options: modern   # Política TLS definida en dynamic.yml
-    http3:
-      advertisedPort: 443   # HTTP/3 (QUIC) — mejora rendimiento
 
 # ---------------------------------------------------------------------------
 # PROVEEDORES
@@ -53,7 +51,6 @@ providers:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "${LETSENCRYPT_EMAIL}"
       storage: /letsencrypt/acme.json
       # TLS Challenge (por defecto). Alternativa: httpChallenge o dnsChallenge.
       tlsChallenge: {}
@@ -69,10 +66,10 @@ certificatesResolvers:
 # ---------------------------------------------------------------------------
 log:
   level: INFO
-  filePath: /var/log/traefik/traefik.log
+  # filePath: /var/log/traefik/traefik.log
 
 accessLog:
-  filePath: /var/log/traefik/access.log
+  # filePath: /var/log/traefik/access.log
   bufferingSize: 100
   fields:
     defaultMode: keep

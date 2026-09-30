@@ -1,0 +1,39 @@
+# =============================================================================
+# docker-compose.dev.yml — Override de desarrollo local
+# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# =============================================================================
+# Requiere certificados mkcert en config/traefik/certs/ (ver README.dev.md)
+# =============================================================================
+
+services:
+  traefik:
+    command:
+      - "--certificatesresolvers.letsencrypt.acme.email="
+    volumes:
+      - ./config/traefik/traefik.dev.yml:/etc/traefik/traefik.yml:ro
+      - ./config/traefik/dynamic.dev.yml:/etc/traefik/dynamic.yml:ro
+      - ./config/traefik/certs:/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    labels:
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver="
+      # Desactivar HSTS en desarrollo (evita problemas con certificados locales)
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=0"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=false"
+      - "traefik.http.middlewares.security-headers.headers.stsPreload=false"
+      - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=false"
+
+  n8n:
+    environment:
+      - N8N_PROTOCOL=https
+      - N8N_WEBHOOK_URL=https://n8n.localhost/
+      - N8N_EDITOR_BASE_URL=https://n8n.localhost/
+      - N8N_HOST=n8n.localhost
+    labels:
+      - "traefik.http.routers.n8n.rule=Host(`n8n.localhost`)"
+      - "traefik.http.routers.n8n.tls.certresolver="
+      - "traefik.http.routers.n8n-webhook.rule=Host(`n8n.localhost`) && PathPrefix(`/webhook`)"
+      - "traefik.http.routers.n8n-webhook.tls.certresolver="
+      - "traefik.http.routers.n8n-http.rule=Host(`n8n.localhost`)"

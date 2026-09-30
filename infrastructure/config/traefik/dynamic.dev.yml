@@ -1,0 +1,70 @@
+# =============================================================================
+# dynamic.dev.yml — Configuración dinámica de Traefik para DESARROLLO LOCAL
+# =============================================================================
+# Certificados locales mkcert para localhost, n8n.localhost, traefik.localhost
+# Sin HSTS. CSP ajustado para permitir blob: workers de n8n.
+# =============================================================================
+
+tls:
+  options:
+    modern:
+      minVersion: VersionTLS12
+      maxVersion: VersionTLS13
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+      sniStrict: true
+
+  # Certificados locales cargados desde /certs/
+  certificates:
+    - certFile: /certs/localhost.pem
+      keyFile: /certs/localhost-key.pem
+      stores:
+        - default
+
+http:
+  middlewares:
+    # Cabeceras de seguridad SIN HSTS (desarrollo local)
+    security-headers:
+      headers:
+        # Sin HSTS en desarrollo
+        # stsSeconds: 0
+        # stsIncludeSubdomains: false
+        # stsPreload: false
+        # forceSTSHeader: false
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # CSP permisivo para n8n: permite blob: workers, unsafe-inline/eval para editor
+        contentSecurityPolicy: >-
+          default-src 'self' blob:;
+          script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:;
+          style-src 'self' 'unsafe-inline';
+          img-src 'self' data: blob: https:;
+          font-src 'self' data:;
+          connect-src 'self' https://api.hubapi.com https://api.mailchimp.com https://api.calendly.com https://graph.microsoft.com wss:;
+          frame-ancestors 'none'
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+
+    # Rate limiting global (desarrollo: desactivado o muy alto)
+    rate-limit-global:
+      rateLimit:
+        average: 1000
+        burst: 2000
+
+    rate-limit-api:
+      rateLimit:
+        average: 300
+        burst: 600
+
+    # Compresión
+    compress:
+      compress: {}

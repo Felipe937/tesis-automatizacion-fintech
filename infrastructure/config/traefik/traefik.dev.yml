@@ -1,0 +1,57 @@
+# =============================================================================
+# traefik.dev.yml — Configuración estática de Traefik para DESARROLLO LOCAL
+# =============================================================================
+# NO usa Let's Encrypt. Carga certificados mkcert desde /certs/
+# Sin HSTS, sin certresolver ACME.
+# =============================================================================
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        # Certificados cargados desde /certs/ via dynamic config
+        options: modern
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: fintech_public
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# Sin certificatesResolvers en desarrollo (usamos certificados locales)
+
+log:
+  level: DEBUG
+  # filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  # filePath: /var/log/traefik/access.log
+  bufferingSize: 100
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep

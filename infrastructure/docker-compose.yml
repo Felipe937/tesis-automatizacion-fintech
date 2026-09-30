@@ -13,11 +13,13 @@ version: "3.9"
 networks:
   # Red interna privada: sólo los servicios backend se comunican aquí
   fintech_internal:
+    name: fintech_internal
     driver: bridge
     internal: true          # sin acceso directo a Internet desde esta red
 
   # Red pública: Traefik expone puertos 80/443 hacia el exterior
   fintech_public:
+    name: fintech_public
     driver: bridge
 
 # ---------------------------------------------------------------------------
@@ -25,35 +27,13 @@ networks:
 # Garantizan la soberanía de la información sensible en el host del VPS.
 # Mapear a un directorio externo cifrando el disco del VPS es recomendable.
 # ---------------------------------------------------------------------------
-volumes:
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${POSTGRES_DATA_PATH:-./data/postgres}   # ruta en el host VPS
-
-  n8n_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${N8N_DATA_PATH:-./data/n8n}             # workflows, credenciales cifradas
-
-  traefik_certs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${TRAEFIK_CERTS_PATH:-./data/traefik/certs}  # certificados ACME/TLS
-
 services:
 
   # ===========================================================================
   # 1. TRAEFIK — Reverse Proxy + TLS Automático (Let's Encrypt / ACME)
   # ===========================================================================
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.6.7
     container_name: traefik
     restart: unless-stopped
     security_opt:
@@ -66,9 +46,11 @@ services:
     volumes:
       # Acceso de sólo lectura al socket Docker para descubrimiento de servicios
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_certs:/letsencrypt
+      - ./traefik/certs:/letsencrypt
       - ./config/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./config/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    command:
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}"
     environment:
       # Si se usa DNS Challenge (recomendado para Ley 1581 — no expone el servidor):
       # Descomenta y configura el proveedor DNS correspondiente (Cloudflare, Route53, etc.)
@@ -77,7 +59,7 @@ services:
     labels:
       # Habilita Traefik Dashboard (acceso restringido con auth básica)
       - "traefik.enable=true"
-      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN_NAME}`) || Host(`traefik.localhost`)"
       - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
       - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.routers.traefik-dashboard.service=api@internal"
@@ -93,9 +75,12 @@ services:
       - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
       - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
       - "traefik.http.middlewares.security-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()"
-      # Middleware: rate limiting para proteger la instancia n8n
-      - "traefik.http.middlewares.rate-limit.ratelimit.average=100"
-      - "traefik.http.middlewares.rate-limit.ratelimit.burst=50"
+      # Middleware: rate limiting para editor n8n (límites altos para carga de assets JS)
+      - "traefik.http.middlewares.rate-limit-editor.ratelimit.average=300"
+      - "traefik.http.middlewares.rate-limit-editor.ratelimit.burst=600"
+      # Middleware: rate limiting estricto para webhooks
+      - "traefik.http.middlewares.rate-limit-webhook.ratelimit.average=50"
+      - "traefik.http.middlewares.rate-limit-webhook.ratelimit.burst=100"
 
   # ===========================================================================
   # 2. POSTGRESQL — Base de datos persistente de n8n
@@ -109,7 +94,7 @@ services:
     networks:
       - fintech_internal      # sólo accesible internamente, nunca expuesto
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres:/var/lib/postgresql/data
       - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-n8n_fintech}
@@ -140,7 +125,7 @@ services:
       - fintech_internal
       - fintech_public
     volumes:
-      - n8n_data:/home/node/.n8n
+      - ./n8n_data:/home/node/.n8n
     depends_on:
       postgres:
         condition: service_healthy
@@ -162,7 +147,7 @@ services:
       N8N_HOST: ${DOMAIN_NAME}
       N8N_PORT: 5678
       N8N_PROTOCOL: https
-      WEBHOOK_URL: https://${DOMAIN_NAME}/
+      N8N_WEBHOOK_URL: https://${DOMAIN_NAME}/
       N8N_EDITOR_BASE_URL: https://${DOMAIN_NAME}/
 
       # -----------------------------------------------------------------------
@@ -246,17 +231,24 @@ services:
 
     labels:
       - "traefik.enable=true"
-      # Router HTTPS principal
-      - "traefik.http.routers.n8n.rule=Host(`${DOMAIN_NAME}`)"
+      # Router HTTPS principal (editor UI) — límites altos para assets JS
+      - "traefik.http.routers.n8n.rule=Host(`${DOMAIN_NAME}`) || Host(`localhost`) || Host(`n8n.localhost`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls=true"
       - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
       - "traefik.http.routers.n8n.service=n8n"
-      - "traefik.http.routers.n8n.middlewares=security-headers,rate-limit"
-      # Service interno
+      - "traefik.http.routers.n8n.middlewares=security-headers,rate-limit-editor"
+      # Router HTTPS para webhooks — límites estrictos
+      - "traefik.http.routers.n8n-webhook.rule=Host(`${DOMAIN_NAME}`) || Host(`localhost`) || Host(`n8n.localhost`) && PathPrefix(`/webhook`)"
+      - "traefik.http.routers.n8n-webhook.entrypoints=websecure"
+      - "traefik.http.routers.n8n-webhook.tls=true"
+      - "traefik.http.routers.n8n-webhook.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.n8n-webhook.service=n8n"
+      - "traefik.http.routers.n8n-webhook.middlewares=security-headers,rate-limit-webhook"
+      # Service interno — puerto correcto de n8n
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
-      # Router HTTP → redirige todo a HTTPS (no se sirve contenido por HTTP)
-      - "traefik.http.routers.n8n-http.rule=Host(`${DOMAIN_NAME}`)"
+      # Router HTTP → redirige a HTTPS (excepto para desarrollo local sin TLS)
+      - "traefik.http.routers.n8n-http.rule=Host(`${DOMAIN_NAME}`) || Host(`localhost`) || Host(`n8n.localhost`)"
       - "traefik.http.routers.n8n-http.entrypoints=web"
       - "traefik.http.routers.n8n-http.middlewares=redirect-to-https"
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
