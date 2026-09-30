@@ -9,6 +9,7 @@
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import {
   processPayload,
@@ -158,9 +159,9 @@ async function handleReconcile(req, res) {
     }
 
     // Extraer metadatos para log de auditoría (variables locales, NO en req)
-    workflowId = rawPayload.metadata?.workflowId ?? 'unknown';
-    executionId = rawPayload.metadata?.executionId ?? 'unknown';
-    transactionCount = rawPayload.transacciones?.length ?? 0;
+    workflowId = rawPayload?.metadata?.workflowId ?? 'unknown';
+    executionId = rawPayload?.metadata?.executionId ?? 'unknown';
+    transactionCount = rawPayload?.transacciones?.length ?? 0;
 
     // Procesar payload
     const result = await processPayload(rawPayload, serverConfig.envConfig);
@@ -274,7 +275,7 @@ async function startServer() {
   const port = parseInt(process.env.PORT ?? '3000', 10);
   const host = process.env.HOST ?? '0.0.0.0';
 
-  const server = createServer(router);
+  server = createServer(router);
 
   server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
@@ -304,12 +305,6 @@ async function startServer() {
       console.error('[Server] Servidor cerrado correctamente');
       process.exit(0);
     });
-
-    // Forzar salida después de 10s si no cierra limpio
-    setTimeout(() => {
-      console.error('[Server] Timeout de cierre forzado');
-      process.exit(1);
-    }, 10_000);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -320,7 +315,9 @@ async function startServer() {
 
 // Solo arrancar si se ejecuta directamente (no al importar)
 // Compatibilidad ESM: import.meta.url vs process.argv[1]
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+const isMainModule = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
 if (isMainModule) {
   startServer();
 }

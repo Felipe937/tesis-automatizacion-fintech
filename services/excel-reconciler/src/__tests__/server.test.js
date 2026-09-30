@@ -54,8 +54,8 @@ function request(options, port) {
       reject(new Error('Request timeout'));
     });
 
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
+    if (options.body !== undefined) {
+      req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
     }
     req.end();
   });
