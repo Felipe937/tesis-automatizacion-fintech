@@ -22,6 +22,12 @@ networks:
     name: fintech_public
     driver: bridge
 
+  # Red para servicios que necesitan salida a Internet (Microsoft Graph, etc.)
+  # NO es internal: permite conexiones salientes a login.microsoftonline.com y graph.microsoft.com
+  fintech_services:
+    name: fintech_services
+    driver: bridge
+
 # ---------------------------------------------------------------------------
 # VOLÚMENES PERSISTENTES
 # Garantizan la soberanía de la información sensible en el host del VPS.
@@ -124,6 +130,7 @@ services:
     networks:
       - fintech_internal
       - fintech_public
+      - fintech_services
     volumes:
       - ./n8n_data:/home/node/.n8n
     depends_on:
@@ -255,3 +262,29 @@ services:
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
       # Red específica para que Traefik use la pública
       - "traefik.docker.network=fintech_public"
+
+  # ===========================================================================
+  # 4. EXCEL-RECONCILER — Microservicio HTTP de conciliación financiera
+  # ===========================================================================
+  excel-reconciler:
+    build:
+      context: ../services/excel-reconciler
+      dockerfile: Dockerfile
+    container_name: excel-reconciler
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # Sin ports: no se expone al host, solo acceso interno via red fintech_services
+    networks:
+      - fintech_services
+    environment:
+      # Credenciales Microsoft Graph (desde .env)
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
+      # API Key para autenticación interna (desde .env)
+      RECONCILER_API_KEY: ${RECONCILER_API_KEY}
+      # Configuración del servidor
+      PORT: "3000"
+      HOST: "0.0.0.0"
