@@ -12,6 +12,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  TransactionSchema,
+  N8nPayloadSchema,
+  ExcelRawRowSchema,
+} from '../schemas.js';
+
+import {
   reconcile,
   normalizeExcelRow,
   mapExcelRowToDomain,
@@ -279,5 +285,64 @@ describe('reconcile — IDs duplicados', () => {
     // Debe coincidir con la primera fila (no la duplicada)
     assert.equal(result.resumen.coincidencias, 1);
     assert.equal(result.resumen.discrepancias, 0);
+  });
+});
+// ---------------------------------------------------------------------------
+// Tests de esquemas Zod (compatibilidad v4.6.6)
+// ---------------------------------------------------------------------------
+
+describe('schemas — Zod v4 compatibility', () => {
+  it('TransactionSchema valida una transacción válida', () => {
+    const txn = makeN8nTransaction();
+    const result = TransactionSchema.safeParse(txn);
+    assert.equal(result.success, true);
+  });
+
+  it('TransactionSchema rechaza campos inválidos y valida issues por path sin depender del mensaje exacto', () => {
+    const invalidTxn = makeN8nTransaction({ cantidad: -5, precioUnitario: -100 });
+    const result = TransactionSchema.safeParse(invalidTxn);
+    assert.equal(result.success, false);
+    const paths = result.error.issues.map((i) => i.path.join('.'));
+    assert.ok(paths.includes('cantidad'));
+    assert.ok(paths.includes('precioUnitario'));
+  });
+
+  it('N8nPayloadSchema valida payload completo con defaults', () => {
+    const payload = {
+      metadata: {
+        workflowId: 'wf-test-1',
+        executionId: 'ex-test-1',
+        timestamp: '2026-09-30T12:00:00.000Z',
+        fuente: 'HUBSPOT',
+      },
+      excelTarget: {
+        driveItemId: 'item-123',
+      },
+      transacciones: [makeN8nTransaction()],
+    };
+    const result = N8nPayloadSchema.safeParse(payload);
+    assert.equal(result.success, true);
+    assert.equal(result.data.excelTarget.worksheetName, 'Portafolio');
+    assert.equal(result.data.opciones.toleranciaCOP, 1);
+  });
+
+  it('N8nPayloadSchema rechaza array de transacciones vacío (.min(1)) identificando el issue por path', () => {
+    const emptyPayload = {
+      metadata: {
+        workflowId: 'wf-test-1',
+        executionId: 'ex-test-1',
+        timestamp: '2026-09-30T12:00:00.000Z',
+        fuente: 'HUBSPOT',
+      },
+      excelTarget: {
+        driveItemId: 'item-123',
+      },
+      transacciones: [],
+    };
+    const result = N8nPayloadSchema.safeParse(emptyPayload);
+    assert.equal(result.success, false);
+    const issue = result.error.issues.find((i) => i.path.includes('transacciones'));
+    assert.ok(issue, 'Debe reportar issue en transacciones');
+    assert.ok(issue.path.length > 0);
   });
 });

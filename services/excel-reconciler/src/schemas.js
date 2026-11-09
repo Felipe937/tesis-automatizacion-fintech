@@ -1,6 +1,7 @@
 /**
  * @fileoverview Esquemas de validación Zod para payloads entrantes de n8n
  * y para las filas crudas leídas desde Excel/OneDrive.
+ * Compatible con la API de Zod v4 (v4.6.6+).
  *
  * MIT License
  * Copyright (c) 2026 Tesis Automatización Fintech — Colombia
