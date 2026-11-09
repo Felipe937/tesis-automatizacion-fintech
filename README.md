@@ -98,6 +98,20 @@ El sistema sigue un patrón de **orquestación centralizada con integraciones sp
   └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+```mermaid
+graph LR
+    CAL[Calendly] -->|webhook| TRF[Traefik<br/>TLS/HTTPS]
+    HUB[HubSpot CRM] <-->|REST API| TRF
+    MAIL[Mailchimp] <-->|REST API| TRF
+    MS[Excel / OneDrive<br/>Microsoft Graph] <-->|REST API| TRF
+    TRF --> N8N[n8n 2.6.3<br/>Orquestador]
+    N8N --> PG[(PostgreSQL 15<br/>Logs & Config)]
+    N8N -->|Execute Command| EXC[excel-reconciler<br/>Node.js 18]
+    EXC <-->|OAuth2 MSAL| MS
+    MAKE[Make / Integromat] -.->|flujos secundarios| HUB
+    MAKE -.->|flujos secundarios| MAIL
+```
+
 ### Roles de cada capa
 
 | Componente | Rol | Tipo |
