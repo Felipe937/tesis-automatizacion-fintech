@@ -131,13 +131,13 @@ El sistema sigue un patrón de **orquestación centralizada con integraciones sp
 
 | Tecnología | Versión | Propósito |
 |---|---|---|
-| Node.js | ≥ 20.0.0 LTS | Runtime del servicio de conciliación financiera |
+| Node.js | 18 LTS | Runtime del servicio de conciliación financiera |
 | Docker + Docker Compose v2 | Estable | Contenerización de n8n, Traefik y PostgreSQL |
 | Traefik | v3.1 | Reverse proxy + TLS automático con ACME/Let's Encrypt |
 | PostgreSQL | 16 Alpine | Base de datos de n8n (credenciales cifradas, workflows) |
 | `decimal.js` | ^10.4.3 | Aritmética financiera de precisión exacta (evita errores IEEE 754) |
-| `zod` | ^3.23.8 | Validación de contratos de datos entre n8n y el servicio custom |
-| `@azure/msal-node` | ^2.16.2 | Autenticación OAuth2 con Microsoft Graph API |
+| `zod` | ^4.6.6 | Validación de contratos de datos entre n8n y el servicio custom |
+| `@azure/msal-node` | ^7.1.0 | Autenticación OAuth2 con Microsoft Graph API |
 
 ---
 
