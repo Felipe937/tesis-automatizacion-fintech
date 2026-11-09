@@ -1,0 +1,274 @@
+{
+  "name": "Lead Capture - Calendly to HubSpot CRM",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calendly-lead-capture",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Webhook Calendly",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "a1b2c3d4-0001-4000-8000-00000000aa01",
+      "notes": "Recibe el evento invitee.created de Calendly.\nURL del webhook: https://n8n.tudominio.com/webhook/calendly-lead-capture\nConfigurar este URL en Calendly → Integrations → Webhooks."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================================\n// Nodo: Validar y Extraer Datos del Webhook de Calendly\n// ===========================================================\n// Extrae los campos relevantes del payload de Calendly y los\n// transforma al formato necesario para HubSpot y Mailchimp.\n//\n// Campos esperados del webhook invitee.created de Calendly:\n// - payload.invitee.name\n// - payload.invitee.email\n// - payload.event\n// - payload.scheduled_event.start_time\n// - payload.scheduled_event.end_time\n// ===========================================================\n\nconst webhookData = $input.first().json;\nconst payload = webhookData.body?.payload ?? webhookData.payload;\n\nif (!payload || !payload.invitee) {\n  throw new Error(\n    'Payload de Calendly inválido: no se encontró el campo \"payload.invitee\". ' +\n    'Verifica que el webhook esté configurado para el evento invitee.created.'\n  );\n}\n\nconst invitee = payload.invitee;\nconst event = payload.scheduled_event ?? payload.event ?? {};\n\n// Separar nombre completo en nombre y apellido\nconst fullName = (invitee.name || '').trim();\nconst nameParts = fullName.split(' ');\nconst firstName = nameParts[0] || '';\nconst lastName = nameParts.slice(1).join(' ') || '';\n\nreturn [{\n  json: {\n    // Datos del lead\n    email: invitee.email,\n    firstName: firstName,\n    lastName: lastName,\n    fullName: fullName,\n    // Datos de la cita\n    eventStartTime: event.start_time || null,\n    eventEndTime: event.end_time || null,\n    eventType: event.name || event.event_type || 'Consulta',\n    meetingUrl: event.location?.join_url || '',\n    // Metadatos\n    source: 'calendly',\n    calendlyEventUri: event.uri || '',\n    calendlyInviteeUri: invitee.uri || '',\n    capturedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Validar Payload Calendly",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "notes": "Extrae y valida los campos del webhook de Calendly.\nTransforma el payload al formato estándar del sistema."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filterGroups\": [{\n    \"filters\": [{\n      \"propertyName\": \"email\",\n      \"operator\": \"EQ\",\n      \"value\": \"{{ $json.email }}\"\n    }]\n  }],\n  \"properties\": [\"email\", \"firstname\", \"lastname\", \"lifecyclestage\"],\n  \"limit\": 1\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Buscar Contacto en HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "HubSpot Private App Token"
+        }
+      },
+      "notes": "Busca si el contacto ya existe en HubSpot CRM por email.\nUsa la API v3 de búsqueda de objetos CRM."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-contact-exists",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Contacto Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 0],
+      "notes": "Bifurcación: si el contacto ya existe en HubSpot, actualiza.\nSi no existe, crea un contacto nuevo."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $('Buscar Contacto en HubSpot').item.json.results[0].id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"lifecyclestage\": \"salesqualifiedlead\",\n    \"hs_lead_status\": \"IN_PROGRESS\",\n    \"notes_last_contacted\": \"Reunión agendada vía Calendly: {{ $('Validar Payload Calendly').item.json.eventType }} — {{ $('Validar Payload Calendly').item.json.eventStartTime }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Actualizar Contacto HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, -100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "HubSpot Private App Token"
+        }
+      },
+      "notes": "Actualiza el contacto existente en HubSpot:\n- Cambia la etapa a 'salesqualifiedlead'\n- Marca como 'Reunión Agendada'"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"email\": \"{{ $('Validar Payload Calendly').item.json.email }}\",\n    \"firstname\": \"{{ $('Validar Payload Calendly').item.json.firstName }}\",\n    \"lastname\": \"{{ $('Validar Payload Calendly').item.json.lastName }}\",\n    \"lifecyclestage\": \"lead\",\n    \"hs_lead_status\": \"NEW\",\n    \"notes_last_contacted\": \"Capturado desde Calendly: {{ $('Validar Payload Calendly').item.json.eventType }} — {{ $('Validar Payload Calendly').item.json.capturedAt }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Crear Contacto en HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "HubSpot Private App Token"
+        }
+      },
+      "notes": "Crea un nuevo contacto en HubSpot CRM con los datos\nextraídos del webhook de Calendly."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $env.MAILCHIMP_SERVER_PREFIX }}.api.mailchimp.com/3.0/lists/{{ $env.MAILCHIMP_LIST_ID }}/members",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"email_address\": \"{{ $('Validar Payload Calendly').item.json.email }}\",\n  \"status\": \"subscribed\",\n  \"merge_fields\": {\n    \"FNAME\": \"{{ $('Validar Payload Calendly').item.json.firstName }}\",\n    \"LNAME\": \"{{ $('Validar Payload Calendly').item.json.lastName }}\"\n  },\n  \"tags\": [\"calendly\", \"prospecto-calificado\"]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Agregar a Mailchimp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "Mailchimp API Key"
+        }
+      },
+      "notes": "Agrega o actualiza al contacto en la lista de Mailchimp.\nLo etiqueta como 'calendly' y 'prospecto-calificado'\npara iniciar la secuencia de bienvenida."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"exitoso\": true,\n  \"mensaje\": \"Lead capturado y registrado correctamente\",\n  \"email\": \"{{ $('Validar Payload Calendly').item.json.email }}\",\n  \"hubspot\": \"procesado\",\n  \"mailchimp\": \"procesado\",\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000008",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, 0],
+      "notes": "Responde al webhook de Calendly con un HTTP 200\nconfirmando que el lead fue procesado correctamente."
+    }
+  ],
+  "connections": {
+    "Webhook Calendly": {
+      "main": [
+        [
+          {
+            "node": "Validar Payload Calendly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Payload Calendly": {
+      "main": [
+        [
+          {
+            "node": "Buscar Contacto en HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Contacto en HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Contacto Existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contacto Existe?": {
+      "main": [
+        [
+          {
+            "node": "Actualizar Contacto HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear Contacto en HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar Contacto HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Agregar a Mailchimp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Contacto en HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Agregar a Mailchimp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar a Mailchimp": {
+      "main": [
+        [
+          {
+            "node": "Responder OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

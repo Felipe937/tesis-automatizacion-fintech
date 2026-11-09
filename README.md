@@ -9,6 +9,7 @@
 [![Estado](https://img.shields.io/badge/Estado-Prototipo%20Funcional-yellow)]()
 
 **Tesis de Grado — Ingeniería de Software**  
+**Universidad Manuela Beltrán (UMB) · Código IS25237**  
 *Objetivo Específico 5: Diseñar e implementar una arquitectura de automatización replicable para emprendedores Fintech colombianos sin grandes equipos de desarrollo.*
 
 </div>
@@ -36,8 +37,11 @@
 8. [Configuración de Integraciones](#-configuración-de-integraciones)
 9. [Consideraciones de Seguridad y Privacidad](#-consideraciones-de-seguridad-y-privacidad)
 10. [Glosario para Emprendedores](#-glosario-para-emprendedores)
-11. [Contribuciones](#-contribuciones)
-12. [Licencia](#-licencia)
+11. [Documentación Técnica](#-documentación-técnica)
+12. [Estado Actual del Prototipo](#-estado-actual-del-prototipo)
+13. [Documentación Adicional (OneDrive)](#-documentación-adicional-onedrive)
+14. [Contribuciones](#-contribuciones)
+15. [Licencia](#-licencia)
 
 ---
 
