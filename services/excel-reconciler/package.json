@@ -13,14 +13,14 @@
     "dev": "node --watch src/index.js",
     "dev:server": "node --watch src/server.js",
     "test": "node --test src/__tests__/reconciler.test.js src/__tests__/server.test.js",
-    "lint": "node --check src/**/*.js"
+    "lint": "node scripts/lint.mjs"
   },
   "dependencies": {
     "@azure/msal-node": "^7.1.0",
     "axios": "^1.7.7",
     "axios-retry": "^4.5.0",
     "decimal.js": "^10.4.3",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.7.5"

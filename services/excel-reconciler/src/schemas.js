@@ -166,7 +166,9 @@ export const N8nPayloadSchema = z.object({
       /** Columna del Excel que contiene el ID único de transacción */
       columnaIdExcel: z.string().default('ID_Transaccion'),
     })
-    .default({}),
+    // Zod 4: `.default()` ya no evalúa los defaults internos del objeto;
+    // `.prefault()` conserva la semántica de zod 3 para `{}`.
+    .prefault({}),
 });
 
 // ---------------------------------------------------------------------------
