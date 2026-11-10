@@ -1,0 +1,399 @@
+{
+  "name": "Secuencias Email",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "interval": 15
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000001",
+      "name": "Schedule 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "resource": "contact",
+        "filters": "={{ 'estado:' + $json.nuevoEstado }}",
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000002",
+      "name": "Detectar Cambio HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "HubSpot Private App"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c0a10003-0000-4000-8000-0000000000b1",
+              "leftValue": "={{ $json.properties.estado }}",
+              "rightValue": "nuevo",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000003",
+      "name": "Evaluar Estado Lead",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "operation": "addTag",
+        "resource": "listMember",
+        "listId": "={{ $credentials.mailchimpListId }}",
+        "emailAddress": "={{ $json.contact.properties.email }}",
+        "tags": ["bienvenida"],
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000004",
+      "name": "Mailchimp Secuencia Bienvenida",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, -120],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "Mailchimp API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addTag",
+        "resource": "listMember",
+        "listId": "={{ $credentials.mailchimpListId }}",
+        "emailAddress": "={{ $json.contact.properties.email }}",
+        "tags": ["cita_pendiente"],
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000005",
+      "name": "Mailchimp Enlace Calendly",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "Mailchimp API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addTag",
+        "resource": "listMember",
+        "listId": "={{ $credentials.mailchimpListId }}",
+        "emailAddress": "={{ $json.contact.properties.email }}",
+        "tags": ["onboarding"],
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000006",
+      "name": "Mailchimp Onboarding Cliente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 120],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "Mailchimp API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "campaign_lead",
+        "columns": {
+          "id_campaign": "={{ $json.campaignId }}",
+          "id_lead": "={{ $json.leadId }}"
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000007",
+      "name": "Actualizar campaign_lead PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "automation_log",
+        "columns": {
+          "workflow_id": "secuencias-email",
+          "timestamp_inicio": "={{ $now.toISOString() }}",
+          "estado": "exito",
+          "registros_procesados": 1,
+          "latencia_ms": null,
+          "mensaje_error": null
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000008",
+      "name": "Log Éxito AutomationLog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1200, 0],
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "automation_log",
+        "columns": {
+          "workflow_id": "secuencias-email",
+          "timestamp_inicio": "={{ $now.toISOString() }}",
+          "timestamp_fin": "={{ $now.toISOString() }}",
+          "estado": "error",
+          "registros_procesados": 0,
+          "latencia_ms": null,
+          "mensaje_error": "={{ $json.error.message }}"
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000009",
+      "name": "Log Error AutomationLog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1200, 240],
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "to": "={{ $credentials.adminEmail }}",
+        "subject": "Error en workflow Secuencias Email — n8n Fintech",
+        "text": "={{ 'Workflow: secuencias-email\nError: ' + $json.error.message + '\nTimestamp: ' + $now.toISOString() }}",
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000010",
+      "name": "Email Alerta Administrador",
+      "type": "n8n-nodes-base.gmailSend",
+      "typeVersion": 2,
+      "position": [1200, 360],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURAR",
+          "name": "Gmail/SMTP Admin"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "purpose": "Detecta cambio de etapa en HubSpot (polling cada 15 min — RF-005) y activa la secuencia de Mailchimp correspondiente: bienvenida (nuevo), enlace Calendly (cita_pendiente) o onboarding (cliente). Registra en campaign_lead y automation_log. Cubre RF-003."
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000011",
+      "name": "Anotación Propósito",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1200, 480]
+    },
+    {
+      "parameters": {
+        "values": {
+          "email": "cliente.prueba@ejemplo.com.co",
+          "estado": "nuevo",
+          "campaignId": 1,
+          "leadId": 1
+        },
+        "options": {}
+      },
+      "id": "c0a10003-0000-4000-8000-000000000012",
+      "name": "Datos Sintéticos Prueba",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [1200, 600]
+    }
+  ],
+  "connections": {
+    "Schedule 15 min": {
+      "main": [
+        [
+          {
+            "node": "Detectar Cambio HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Cambio HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Evaluar Estado Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar Estado Lead": {
+      "main": [
+        [
+          {
+            "node": "Mailchimp Secuencia Bienvenida",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mailchimp Enlace Calendly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mailchimp Onboarding Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mailchimp Secuencia Bienvenida": {
+      "main": [
+        [
+          {
+            "node": "Actualizar campaign_lead PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mailchimp Enlace Calendly": {
+      "main": [
+        [
+          {
+            "node": "Actualizar campaign_lead PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mailchimp Onboarding Cliente": {
+      "main": [
+        [
+          {
+            "node": "Actualizar campaign_lead PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar campaign_lead PostgreSQL": {
+      "main": [
+        [
+          {
+            "node": "Log Éxito AutomationLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Éxito AutomationLog": {
+      "main": [
+        [
+          {
+            "node": "Anotación Propósito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error AutomationLog": {
+      "main": [
+        [
+          {
+            "node": "Email Alerta Administrador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Alerta Administrador": {
+      "main": [
+        [
+          {
+            "node": "Anotación Propósito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos Sintéticos Prueba": {
+      "main": [
+        [
+          {
+            "node": "Anotación Propósito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

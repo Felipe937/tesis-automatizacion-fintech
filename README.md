@@ -134,7 +134,7 @@ graph LR
 
 | Herramienta | Versión mínima | Costo estimado (plan básico) | Caso de uso en este proyecto |
 |---|---|---|---|
-| [n8n](https://n8n.io/) | `latest` (self-hosted) | \$0 (self-hosted) | Orquestación central de flujos |
+| [n8n](https://n8n.io/) | `2.6.3` (self-hosted) | \$0 (self-hosted) | Orquestación central de flujos |
 | [Make](https://www.make.com/) | — | Desde \$9 USD/mes | Flujos visuales complementarios |
 | [HubSpot](https://www.hubspot.com/) | CRM Free o Starter | Desde \$0 | Gestión de contactos y pipeline |
 | [Mailchimp](https://mailchimp.com/) | Essentials+ | Desde \$13 USD/mes | Campañas y automatización de email |
@@ -145,13 +145,30 @@ graph LR
 
 | Tecnología | Versión | Propósito |
 |---|---|---|
-| Node.js | 18 LTS | Runtime del servicio de conciliación financiera |
+| Node.js | >=18.0.0 (módulos nuevos) / >=20.0.0 (excel-reconciler) | Runtime de servicios Node.js personalizados |
 | Docker + Docker Compose v2 | Estable | Contenerización de n8n, Traefik y PostgreSQL |
-| Traefik | v3.1 | Reverse proxy + TLS automático con ACME/Let's Encrypt |
-| PostgreSQL | 16 Alpine | Base de datos de n8n (credenciales cifradas, workflows) |
+| Traefik | v3.6.7 | Reverse proxy + TLS automático con ACME/Let's Encrypt |
+| PostgreSQL | 16 Alpine | Base de datos de n8n + tablas de negocio del MER (tesis documenta PG 15; véase nota de versiones abajo) |
 | `decimal.js` | ^10.4.3 | Aritmética financiera de precisión exacta (evita errores IEEE 754) |
 | `zod` | ^4.6.6 | Validación de contratos de datos entre n8n y el servicio custom |
 | `@azure/msal-node` | ^7.1.0 | Autenticación OAuth2 con Microsoft Graph API |
+
+---
+
+### ⚠️ Notas de versiones (diferencias vs. tesis IS25237)
+
+La tesis documenta versiones específicas en §4.5.1. A continuación se deta
+lla el estado real del repositorio y las justificaciones técnicas de cada
+desviación:
+
+| Componente | Versión tesis | Versión actual | Justificación |
+|------------|--------------|----------------|---------------|
+| **n8n** | 2.6.3 | 2.6.3 | Alineado exactamente con la tesis. Imagen `n8nio/n8n:2.6.3` en `docker-compose.yml`. |
+| **PostgreSQL** | 15 | 16 Alpine | La tesis especifica PG 15, pero el Docker oficial `postgres:15-alpine` presentó incompatibilidades con las extensiones `uuid-ossp` y `pg_trgm` en el entorno de despliegue. Se usa `postgres:16-alpine`, que es retrocompatible con PG 15 para todos los tipos de datos, ENUMs y requerimientos del MER. El SQL de `init.sql` es compatible con ambas versiones. |
+| **Node.js (excel-reconciler)** | >=18.0.0 | >=20.0.0 | El servicio `excel-reconciler` requiere Node 20+ por uso de APIs nativas (fetch, node:test). Se documenta en su `package.json`. |
+| **Node.js (módulos nuevos: hubspot, mailchimp, calendly)** | >=18.0.0 | >=18.0.0 | Alineado con la tesis. Especificado en `"engines"` de cada `package.json`. |
+
+**Decisión técnica:** PostgreSQL 16 se mantiene por estabilidad y disponibilidad de imágenes oficiales. Ninguna funcionalidad del MER depende de características exclusivas de PG 15 o PG 16.
 
 ---
 
@@ -348,6 +365,22 @@ npm test
 
 ## 🔄 Flujos de Automatización
 
+El repositorio incluye **cuatro archivos JSON de workflows** en `workflows/`, todos importables en n8n 2.6.3:
+
+| # | Archivo | Nombre | Descripción | RF cubiertos |
+|---|---------|--------|-------------|--------------|
+| 1 | `captura-leads.json` | Captura Leads | Calendly webhook → HubSpot (buscar/crear contacto) → PostgreSQL (lead + appointment) → Mailchimp suscriptor → automation_log | RF-001 a RF-005 |
+| 2 | `conciliacion-excel.json` | Conciliación Excel | Webhook → excel-reconciler (POST /reconcile) → evaluar resultado → responder | RF-008 a RF-010 (base) |
+| 3 | `secuencias-email.json` | Secuencias Email | Schedule 15 min → detectar cambio HubSpot → Mailchimp tags → campaign_lead → automation_log | RF-003, RF-005 |
+| 4 | `alertas-financieras.json` | Alertas Financieras | Schedule cron → HTTP excel-reconciler → evaluar status → automation_log (exito/advertencia/error) → email admin | RF-008, RF-009, RF-010 |
+
+Todos los workflows incluyen:
+- **Sin secretos hardcodeados**: credenciales vía gestor de n8n (`{{ $credentials }}`)
+- **Idempotencia**: verificación antes de crear duplicados en PostgreSQL y Mailchimp
+- **Datos sintéticos de prueba**: nodo `Set` separado para pruebas
+- **Ramas de error**: reintentos (30s, 60s, 120s), log en automation_log y email al administrador
+- **Nodo anotación**: documentación del propósito del workflow
+
 ### Flujo 1 — Captura y Calificación de Leads (Calendly → HubSpot → Mailchimp)
 
 ```
@@ -410,6 +443,17 @@ Cuando un contacto avanza de etapa en el pipeline de HubSpot (por ejemplo, de `P
 1. Elimina al contacto de la lista de email de "Prospectos" en Mailchimp.
 2. Lo agrega a la lista de "Clientes Activos".
 3. Dispara la secuencia de onboarding correspondiente (ej: instrucciones de apertura de cuenta).
+
+### Flujo 4 — Alertas Financieras (Conciliación → Notificación + Registro)
+
+Archivo: `workflows/alertas-financieras.json` — Cubre RF-008, RF-009, RF-010.
+
+1. Schedule (cron) dispara el workflow en intervalo configurado.
+2. HTTP Request consulta `POST /reconcile` del servicio excel-reconciler.
+3. Evalúa el campo `status` de la respuesta:
+   - `COINCIDE` → INSERT en `automation_log` con `estado='exito'`.
+   - `DISCREPANCIA`, `SOLO_EN_N8N`, `SOLO_EN_EXCEL` → INSERT en `automation_log` con `estado='advertencia'` + email al administrador.
+4. Rama de error: fallos HTTP (5xx/timeout) → reintentos 3 veces → INSERT en `automation_log` con `estado='error'` + email de alerta.
 
 ---
 
