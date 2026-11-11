@@ -51,6 +51,14 @@ jobs:
         if: matrix.install
         run: npm ci
 
+      # La prueba de integración de `metrics` cubre también el componente de
+      # dashboard (paquete hermano): sin estas dependencias el fichero falla al
+      # importar `zod`/`pg` del paquete dashboard.
+      - name: Install dependencies (dashboard, dependencia de la prueba de integración)
+        if: matrix.service == 'metrics'
+        working-directory: services/dashboard
+        run: npm ci
+
       - name: Lint
         run: npm run lint
 
