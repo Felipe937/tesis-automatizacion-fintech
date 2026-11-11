@@ -16,8 +16,14 @@ import {
   calcularCampañasMailchimp,
   calcularCitasSemana,
   calcularResumenFinanciero,
+  calcularSeguimientoComercial,
+  calcularKpis,
+  calcularMonitoreoIntegraciones,
+  calcularControlActualizacion,
   generarDashboard,
   ETAPAS_LEAD,
+  ETAPAS_COMERCIALES,
+  PLATAFORMAS_MONITOREDAS,
 } from '../dashboard.js';
 
 // ---------------------------------------------------------------------------
@@ -213,6 +219,165 @@ describe('calcularResumenFinanciero', () => {
     // De 0 a 1 operación = +100%
     assert.equal(resultado.variacionPorcentualMesAnterior, 100);
     assert.equal(resultado.numeroOperacionesMesActual, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bloques del mockup §4.4 (KPI, seguimiento comercial, monitoreo, control)
+// ---------------------------------------------------------------------------
+
+describe('calcularSeguimientoComercial', () => {
+  const leads = [
+    { estado: 'nuevo' },
+    { estado: 'nuevo' },
+    { estado: 'prospecto' },
+    { estado: 'cita_pendiente' },
+    { estado: 'cita_confirmada' },
+    { estado: 'cita_confirmada' },
+    { estado: 'cliente' },
+    { estado: 'inactivo' },
+  ];
+
+  it('agrega los seis estados del MER en las cuatro etapas comerciales', () => {
+    const filas = calcularSeguimientoComercial(leads);
+
+    assert.equal(filas.length, 6);
+    assert.equal(filas.find((f) => f.estado === 'nuevo').etapaComercial, 'Nuevo');
+    assert.equal(filas.find((f) => f.estado === 'prospecto').etapaComercial, 'En seguimiento');
+    assert.equal(filas.find((f) => f.estado === 'cita_pendiente').etapaComercial, 'Cita agendada');
+    assert.equal(filas.find((f) => f.estado === 'cita_confirmada').etapaComercial, 'Cita agendada');
+    assert.equal(filas.find((f) => f.estado === 'cliente').etapaComercial, 'Convertido');
+    assert.equal(filas.find((f) => f.estado === 'inactivo').etapaComercial, '— (fuera del embudo)');
+  });
+
+  it('calcula la participación porcentual sobre el total', () => {
+    const filas = calcularSeguimientoComercial(leads);
+
+    assert.equal(filas.find((f) => f.estado === 'nuevo').cantidad, 2);
+    assert.equal(filas.find((f) => f.estado === 'nuevo').participacionPorcentaje, 25);
+    assert.equal(filas.find((f) => f.estado === 'cita_confirmada').participacionPorcentaje, 25);
+  });
+
+  it('deja el estado inactivo fuera de la participación del embudo', () => {
+    const filas = calcularSeguimientoComercial(leads);
+
+    assert.equal(filas.find((f) => f.estado === 'inactivo').cantidad, 1);
+    assert.equal(filas.find((f) => f.estado === 'inactivo').participacionPorcentaje, 0);
+  });
+
+  it('maneja el caso sin leads', () => {
+    const filas = calcularSeguimientoComercial([]);
+
+    assert.equal(filas.length, 6);
+    assert.ok(filas.every((f) => f.cantidad === 0 && f.participacionPorcentaje === 0));
+  });
+});
+
+describe('calcularKpis', () => {
+  const leads = [
+    { estado: 'nuevo' },
+    { estado: 'cliente' },
+    { estado: 'cliente' },
+    { estado: 'prospecto' },
+  ];
+  const citas = [
+    { estado: 'confirmada', fecha_hora_inicio: '2026-11-03T10:00:00.000Z' },
+    { estado: 'cancelada', fecha_hora_inicio: '2026-11-04T10:00:00.000Z' },
+  ];
+  const inversiones = [
+    { estado: 'activa', fecha_registro: '2026-11-03T10:00:00.000Z' },
+    { estado: 'activa', fecha_registro: '2026-10-03T10:00:00.000Z' },
+  ];
+
+  it('calcula los cuatro indicadores clave', () => {
+    const kpis = calcularKpis({
+      leads,
+      citas,
+      inversiones,
+      periodoInicio: '2026-11-01T00:00:00.000Z',
+      periodoFin: '2026-11-30T00:00:00.000Z',
+    });
+
+    assert.equal(kpis.leadsRegistradas, 4);
+    assert.equal(kpis.citasAgendadas, 1); // la cancelada no cuenta como agendada
+    assert.equal(kpis.inversionesRegistradas, 1); // sólo la del periodo
+    assert.equal(kpis.conversionPorcentaje, 50); // 2 clientes de 4 leads
+  });
+
+  it('devuelve 0 % de conversión sin leads', () => {
+    const kpis = calcularKpis({
+      leads: [],
+      citas: [],
+      inversiones: [],
+      periodoInicio: '2026-11-01T00:00:00.000Z',
+      periodoFin: '2026-11-30T00:00:00.000Z',
+    });
+
+    assert.equal(kpis.conversionPorcentaje, 0);
+    assert.equal(kpis.leadsRegistradas, 0);
+  });
+});
+
+describe('calcularMonitoreoIntegraciones', () => {
+  it('informa una fila por plataforma monitoreada', () => {
+    const filas = calcularMonitoreoIntegraciones([]);
+
+    assert.equal(filas.length, PLATAFORMAS_MONITOREDAS.length);
+    assert.ok(filas.every((f) => f.estado === 'Sin ejecuciones'));
+    assert.equal(filas[0].plataforma, 'HubSpot CRM');
+    assert.ok(filas.some((f) => f.plataforma === 'Excel / OneDrive'));
+  });
+
+  it('toma la última ejecución y su estado por plataforma', () => {
+    const filas = calcularMonitoreoIntegraciones([
+      {
+        workflow_id: 'captura-leads',
+        timestamp_inicio: '2026-11-03T10:00:00.000Z',
+        estado: 'exito',
+      },
+      {
+        workflow_id: 'captura-leads',
+        timestamp_inicio: '2026-11-08T10:00:00.000Z',
+        estado: 'error',
+      },
+    ]);
+
+    const hubspot = filas.find((f) => f.plataforma === 'HubSpot CRM');
+    assert.equal(hubspot.ultimaSincronizacion, '2026-11-08T10:00:00.000Z');
+    assert.equal(hubspot.estado, 'Con errores');
+  });
+
+  it('marca Correcto cuando la última ejecución fue exitosa', () => {
+    const filas = calcularMonitoreoIntegraciones([
+      {
+        workflow_id: 'captura-leads',
+        timestamp_inicio: '2026-11-08T10:00:00.000Z',
+        estado: 'exito',
+      },
+    ]);
+
+    assert.equal(filas.find((f) => f.plataforma === 'HubSpot CRM').estado, 'Correcto');
+  });
+});
+
+describe('calcularControlActualizacion', () => {
+  it('informa sincronización correcta cuando todas las plataformas están bien', () => {
+    const control = calcularControlActualizacion(
+      [{ plataforma: 'HubSpot CRM', estado: 'Correcto' }],
+      '2026-11-10T12:00:00.000Z',
+    );
+
+    assert.equal(control.estadoGeneral, 'Sincronización correcta');
+    assert.equal(control.ultimaActualizacion, '2026-11-10T12:00:00.000Z');
+  });
+
+  it('informa que hay que revisar cuando hay errores', () => {
+    const control = calcularControlActualizacion(
+      [{ plataforma: 'HubSpot CRM', estado: 'Con errores' }],
+      '2026-11-10T12:00:00.000Z',
+    );
+
+    assert.equal(control.estadoGeneral, 'Revisar sincronizaciones con errores');
   });
 });
 

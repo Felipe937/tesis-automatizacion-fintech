@@ -40,7 +40,9 @@ async function readPayload() {
 
   if (process.stdin.isTTY) {
     throw new Error(
-      'No se recibió payload. Ejemplo: echo \'{"command":"getEvent","uri":"https://api.calendly.com/scheduled_events/uuid"}\' | node src/index.js',
+      'No se recibió payload. ' +
+        'Ejemplo: echo \'{"command":"getEvent","uri":"https://api.calendly.com/scheduled_events/uuid"}\' ' +
+        '| node src/index.js',
     );
   }
 

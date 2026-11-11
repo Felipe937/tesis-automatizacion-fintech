@@ -227,21 +227,22 @@
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{ $credentials.adminEmail }}",
+        "from": "={{ $env.SMTP_SENDER || 'alertas@ejemplo.co' }}",
+        "to": "={{ $env.ADMIN_EMAIL || 'REEMPLAZAR_ADMIN_EMAIL' }}",
         "subject": "Error en workflow Captura Leads — n8n Fintech",
+        "emailFormat": "text",
         "text": "={{ 'Workflow: captura-leads\nError: ' + $json.error.message + '\nTimestamp: ' + $now.toISOString() }}",
         "options": {}
       },
       "id": "c0a10002-0000-4000-8000-000000000011",
       "name": "Email Alerta Administrador",
-      "type": "n8n-nodes-base.gmailSend",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [1440, 360],
       "credentials": {
-        "gmailOAuth2": {
+        "smtp": {
           "id": "CONFIGURAR",
-          "name": "Gmail/SMTP Admin"
+          "name": "SMTP n8n Fintech"
         }
       }
     },

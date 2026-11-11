@@ -1,0 +1,399 @@
+{
+  "name": "Actualización Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "cron": "0 6 * * *"
+        },
+        "timezone": "America/Bogota",
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000001",
+      "name": "Schedule Actualización Dashboard",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-01",
+              "name": "periodo_inicio",
+              "value": "={{ $now.clone().minus({ hours: Number($env.DASHBOARD_PERIODO_HORAS || 168) }).toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-02",
+              "name": "periodo_fin",
+              "value": "={{ $now.toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-03",
+              "name": "periodo_etiqueta",
+              "value": "={{ $now.clone().minus({ hours: Number($env.DASHBOARD_PERIODO_HORAS || 168) }).format('yyyy-MM-dd') }} al {{ $now.format('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-04",
+              "name": "excel_drive_item_id",
+              "value": "={{ $env.DASHBOARD_EXCEL_DRIVE_ITEM_ID || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-05",
+              "name": "excel_worksheet_name",
+              "value": "={{ $env.DASHBOARD_EXCEL_WORKSHEET || 'Dashboard Ejecutivo' }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-06",
+              "name": "destinatario",
+              "value": "={{ $env.ADMIN_EMAIL || 'REEMPLAZAR_ADMIN_EMAIL' }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-07",
+              "name": "remitente",
+              "value": "={{ $env.SMTP_SENDER || 'alertas@ejemplo.co' }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-08",
+              "name": "inicio_ejecucion",
+              "value": "={{ $now.toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000002",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*)::int AS count FROM automation_log WHERE workflow_id = 'dashboard-ejecutivo' AND estado = 'exito' AND timestamp_inicio >= NOW() - INTERVAL '23 hours'",
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000003",
+      "name": "Verificar Idempotencia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [440, 0],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c0a10006-0000-4000-8000-0000000000b1",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "greaterThan"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000004",
+      "name": "¿Ya se actualizó hoy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT COUNT(*) FROM lead WHERE fecha_registro >= '{{ $now.clone().minus({ hours: Number($env.DASHBOARD_PERIODO_HORAS || 168) }).toISOString() }}' AND fecha_registro <= '{{ $now.toISOString() }}')::int AS leads_periodo, (SELECT COUNT(*) FROM appointment WHERE fecha_hora_inicio >= '{{ $now.clone().minus({ hours: Number($env.DASHBOARD_PERIODO_HORAS || 168) }).toISOString() }}' AND fecha_hora_inicio <= '{{ $now.toISOString() }}')::int AS citas_periodo, (SELECT COUNT(*) FROM investment WHERE estado = 'activa')::int AS inversiones_activas, (SELECT COUNT(*) FROM campaign)::int AS campanas",
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000005",
+      "name": "Consultar Resumen MER",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 60],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construye el payload del componente de dashboard.\n// El componente lee el MER directamente desde PostgreSQL y actualiza el\n// libro Excel en OneDrive mediante Microsoft Graph (OAuth 2.0).\nconst config = $('Configuración').first().json;\n\nreturn [\n  {\n    json: {\n      workflowId: 'dashboard-ejecutivo',\n      periodoInicio: config.periodo_inicio,\n      periodoFin: config.periodo_fin,\n      fuenteDatos: 'postgres',\n      actualizarExcel: Boolean(config.excel_drive_item_id),\n      excelDriveItemId: config.excel_drive_item_id || undefined,\n      excelWorksheetName: config.excel_worksheet_name,\n    },\n  },\n];"
+      },
+      "id": "c0a10006-0000-4000-8000-000000000006",
+      "name": "Preparar Payload Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dashboard:3002/dashboard",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "c0a10006-0000-4000-8000-000000000007",
+      "name": "Invocar Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, -120],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURAR",
+          "name": "Dashboard API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Redacta la notificación del dashboard a partir de la respuesta del\n// componente y del resumen del MER consultado en PostgreSQL.\nconst config = $('Configuración').first().json;\nconst resumen = $('Consultar Resumen MER').first().json;\nconst respuesta = $('Invocar Dashboard').first().json;\n\nconst d = respuesta.data ?? respuesta;\nconst financiero = d.resumenFinanciero ?? {};\nconst trazabilidad = d.resumenAutomatizaciones ?? {};\nconst kpis = d.kpis ?? {};\nconst comercial = Array.isArray(d.seguimientoComercial) ? d.seguimientoComercial : [];\nconst monitoreo = Array.isArray(d.monitoreoIntegraciones) ? d.monitoreoIntegraciones : [];\nconst control = d.controlActualizacion ?? {};\n\nconst numero = (valor, decimales = 0) =>\n  new Intl.NumberFormat('es-CO', {\n    minimumFractionDigits: decimales,\n    maximumFractionDigits: decimales,\n  }).format(Number(valor ?? 0));\n\nconst fecha = (iso) =>\n  iso\n    ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'short', timeStyle: 'short' }).format(\n        new Date(iso),\n      )\n    : '—';\n\nconst lineas = [\n  'DASHBOARD EJECUTIVO — ASESOR FINTECH',\n  `Periodo: ${config.periodo_etiqueta}`,\n  `Actualizado: ${d.fechaActualizacion ?? config.inicio_ejecucion}`,\n  `Origen de los datos: ${d.datosSinteticos ? 'SINTÉTICOS (demostración)' : 'REALES (PostgreSQL · MER)'}`,\n  '',\n  'INDICADORES CLAVE DE GESTIÓN (KPIs)',\n  `- Leads registradas: ${numero(kpis.leadsRegistradas)}`,\n  `- Citas agendadas: ${numero(kpis.citasAgendadas)}`,\n  `- Inversiones registradas: ${numero(kpis.inversionesRegistradas)}`,\n  `- Conversión: ${numero(kpis.conversionPorcentaje, 2)} %`,\n  '',\n  'BLOQUE A — SEGUIMIENTO COMERCIAL',\n  ...(comercial.length > 0\n    ? comercial.map(\n        (f) =>\n          `- ${f.estado} (${f.etapaComercial}): ${numero(f.cantidad)} · ${numero(f.participacionPorcentaje, 2)} %`,\n      )\n    : ['- Sin leads en el periodo.']),\n  '',\n  'BLOQUE B — CAMPAÑAS MAILCHIMP',\n  ...(Array.isArray(d.campañasMailchimp) && d.campañasMailchimp.length > 0\n    ? d.campañasMailchimp.map(\n        (c) => `- ${c.nombre} (${c.estado}): suscriptores ${numero(c.suscriptores)}`,\n      )\n    : ['- Sin campañas registradas en el periodo.']),\n  '',\n  'BLOQUE C — CITAS DEL PERIODO',\n  `- Citas confirmadas: ${numero(Array.isArray(d.citasSemana) ? d.citasSemana.length : 0)}`,\n  '',\n  'BLOQUE D — RESUMEN FINANCIERO',\n  `- Monto acumulado (inversiones activas): ${numero(financiero.montoAcumulado ?? financiero.saldoTotalInversionesActivas)} COP`,\n  `- Total de operaciones: ${numero(financiero.totalOperaciones)}`,\n  `- Operaciones pendientes: ${numero(financiero.operacionesPendientes)}`,\n  `- Operaciones completadas: ${numero(financiero.operacionesCompletadas)}`,\n  `- Operaciones del mes actual: ${numero(financiero.numeroOperacionesMesActual)}`,\n  `- Variación % frente al mes anterior: ${numero(financiero.variacionPorcentualMesAnterior, 2)} %`,\n  '',\n  'MONITOREO DE INTEGRACIONES',\n  ...(monitoreo.length > 0\n    ? monitoreo.map((m) => `- ${m.plataforma}: ${fecha(m.ultimaSincronizacion)} · ${m.estado}`)\n    : ['- Sin datos de sincronización en el periodo.']),\n  '',\n  'CONTROL DE ACTUALIZACIÓN',\n  `- Última actualización: ${fecha(control.ultimaActualizacion)}`,\n  `- Estado general: ${control.estadoGeneral ?? '—'}`,\n  '',\n  'TRAZABILIDAD DE AUTOMATIZACIONES (automation_log)',\n  `- Ejecuciones del periodo: ${numero(trazabilidad.totalEjecuciones)}`,\n  `- Con error: ${numero(trazabilidad.ejecucionesConError)} · Con advertencia: ${numero(trazabilidad.ejecucionesConAdvertencia)}`,\n  '',\n  'RESUMEN DEL MER EN POSTGRESQL',\n  `- Leads captados en el periodo: ${numero(resumen.leads_periodo)}`,\n  `- Citas en el periodo: ${numero(resumen.citas_periodo)}`,\n  `- Inversiones activas: ${numero(resumen.inversiones_activas)}`,\n  `- Campañas registradas: ${numero(resumen.campanas)}`,\n];\n\nif (d.excelActualizado) {\n  lineas.push(\n    '',\n    `Libro Excel actualizado en OneDrive: ${d.excelActualizado.filasEscritas} fila(s) escritas en la hoja «${config.excel_worksheet_name}».`,\n  );\n} else {\n  lineas.push('', 'El libro Excel no se actualizó: no se configuró DASHBOARD_EXCEL_DRIVE_ITEM_ID.');\n}\n\nif (Array.isArray(d.advertencias) && d.advertencias.length > 0) {\n  lineas.push('', 'NOTAS', ...d.advertencias.map((a) => `- ${a}`));\n}\n\nreturn [\n  {\n    json: {\n      destinatario: config.destinatario,\n      remitente: config.remitente,\n      asunto: `Dashboard Ejecutivo — ${config.periodo_etiqueta}`,\n      cuerpo: lineas.join('\\n'),\n      total_registros:\n        Number(resumen.leads_periodo ?? 0) +\n        Number(resumen.citas_periodo ?? 0) +\n        Number(resumen.inversiones_activas ?? 0),\n      latencia_ms: Math.max(0, Date.now() - Date.parse(config.inicio_ejecucion)),\n    },\n  },\n];\n"
+      },
+      "id": "c0a10006-0000-4000-8000-000000000008",
+      "name": "Construir Notificación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, -120]
+    },
+    {
+      "parameters": {
+        "from": "={{ $json.remitente }}",
+        "to": "={{ $json.destinatario }}",
+        "subject": "={{ $json.asunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.cuerpo }}",
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000009",
+      "name": "Enviar Notificación",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1780, -120],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "smtp": {
+          "id": "CONFIGURAR",
+          "name": "SMTP n8n Fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "operation": "insert",
+        "table": "automation_log",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "dashboard-ejecutivo",
+            "timestamp_inicio": "={{ $('Configuración').first().json.inicio_ejecucion }}",
+            "timestamp_fin": "={{ $now.toISOString() }}",
+            "estado": "exito",
+            "registros_procesados": "={{ $json.total_registros }}",
+            "latencia_ms": "={{ $json.latencia_ms }}",
+            "mensaje_error": null
+          }
+        },
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000010",
+      "name": "Registrar Éxito",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2000, -120],
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "operation": "insert",
+        "table": "automation_log",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "dashboard-ejecutivo",
+            "timestamp_inicio": "={{ $('Configuración').first().json.inicio_ejecucion }}",
+            "timestamp_fin": "={{ $now.toISOString() }}",
+            "estado": "error",
+            "registros_procesados": 0,
+            "latencia_ms": null,
+            "mensaje_error": "={{ ($json.error && $json.error.message) ? $json.error.message : 'Error no especificado en la actualización del dashboard' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000011",
+      "name": "Registrar Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1560, 200],
+      "credentials": {
+        "postgres": {
+          "id": "CONFIGURAR",
+          "name": "PostgreSQL n8n_fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "={{ $('Configuración').first().json.remitente }}",
+        "to": "={{ $('Configuración').first().json.destinatario }}",
+        "subject": "Error en workflow Actualización Dashboard — n8n Fintech",
+        "emailFormat": "text",
+        "text": "={{ 'Workflow: dashboard-ejecutivo' + '\\nError: ' + (($json.error && $json.error.message) ? $json.error.message : 'error no especificado') + '\\nTimestamp: ' + $now.toISOString() }}",
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000012",
+      "name": "Email Alerta Error",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1780, 200],
+      "credentials": {
+        "smtp": {
+          "id": "CONFIGURAR",
+          "name": "SMTP n8n Fintech"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Actualización del Dashboard Ejecutivo (§4.4)\n\n**Frecuencia por defecto:** todos los días a las 6:00 a. m. (America/Bogota), configurable editando el trigger *Schedule Actualización Dashboard* (regla cron).\n\n**Periodo analizado:** las últimas `DASHBOARD_PERIODO_HORAS` horas (por defecto 168 = 7 días), configurable por variable de entorno.\n\n**Flujo:**\n1. Trigger programado → configuración del periodo.\n2. Verificación de idempotencia en `automation_log` (no se actualiza dos veces en la misma jornada).\n3. Consulta de verificación al MER en PostgreSQL.\n4. Invocación del componente `services/dashboard` (lee lead, campaign, campaign_lead, appointment, investment y automation_log, y actualiza el libro Excel en OneDrive vía Microsoft Graph).\n5. Notificación al usuario piloto y registro en `automation_log`.\n\n**Variable requerida para escribir en OneDrive:** `DASHBOARD_EXCEL_DRIVE_ITEM_ID` (DriveItem ID del libro Excel).",
+        "height": 420,
+        "width": 640
+      },
+      "id": "c0a10006-0000-4000-8000-000000000013",
+      "name": "Anotación Propósito",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "demo-01",
+              "name": "periodo_etiqueta",
+              "value": "2026-11-02 al 2026-11-08",
+              "type": "string"
+            },
+            {
+              "id": "demo-02",
+              "name": "excel_drive_item_id",
+              "value": "item-sintetico-demo",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "c0a10006-0000-4000-8000-000000000014",
+      "name": "Datos Sintéticos Prueba",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2000, 620]
+    }
+  ],
+  "connections": {
+    "Schedule Actualización Dashboard": {
+      "main": [[{ "node": "Configuración", "type": "main", "index": 0 }]]
+    },
+    "Configuración": {
+      "main": [[{ "node": "Verificar Idempotencia", "type": "main", "index": 0 }]]
+    },
+    "Verificar Idempotencia": {
+      "main": [
+        [{ "node": "¿Ya se actualizó hoy?", "type": "main", "index": 0 }],
+        [{ "node": "Registrar Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "¿Ya se actualizó hoy?": {
+      "main": [
+        [{ "node": "Anotación Propósito", "type": "main", "index": 0 }],
+        [{ "node": "Consultar Resumen MER", "type": "main", "index": 0 }]
+      ]
+    },
+    "Consultar Resumen MER": {
+      "main": [
+        [{ "node": "Preparar Payload Dashboard", "type": "main", "index": 0 }],
+        [{ "node": "Registrar Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Preparar Payload Dashboard": {
+      "main": [[{ "node": "Invocar Dashboard", "type": "main", "index": 0 }]]
+    },
+    "Invocar Dashboard": {
+      "main": [
+        [{ "node": "Construir Notificación", "type": "main", "index": 0 }],
+        [{ "node": "Registrar Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Construir Notificación": {
+      "main": [[{ "node": "Enviar Notificación", "type": "main", "index": 0 }]]
+    },
+    "Enviar Notificación": {
+      "main": [
+        [{ "node": "Registrar Éxito", "type": "main", "index": 0 }],
+        [{ "node": "Registrar Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar Éxito": {
+      "main": [[{ "node": "Anotación Propósito", "type": "main", "index": 0 }]]
+    },
+    "Registrar Error": {
+      "main": [[{ "node": "Email Alerta Error", "type": "main", "index": 0 }]]
+    },
+    "Email Alerta Error": {
+      "main": [[{ "node": "Anotación Propósito", "type": "main", "index": 0 }]]
+    },
+    "Datos Sintéticos Prueba": {
+      "main": [[{ "node": "Anotación Propósito", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

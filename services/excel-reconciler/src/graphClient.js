@@ -290,10 +290,14 @@ export function createGraphClient(config) {
      * @param {string} driveItemId   - ID del archivo en OneDrive
      * @param {string} worksheetName - Nombre de la hoja
      * @param {string} address       - Dirección del rango en notación A1 (ej: 'A5:P5')
-     * @param {Array}  values        - Valores a escribir (array bidimensional)
+     * @param {Array}  [values]      - Valores a escribir (array bidimensional).
+     *                                 Si se omite, sólo se aplica el formato.
+     * @param {object} [format]      - Formato del rango (workbookFormat de
+     *                                 Graph API: fill, font, numberFormat,
+     *                                 horizontalAlignment, borders, …).
      * @returns {Promise<void>}
      */
-    async updateRange(driveItemId, worksheetName, address, values) {
+    async updateRange(driveItemId, worksheetName, address, values, format) {
       console.log(
         `[GraphClient] Actualizando rango ${address} en "${worksheetName}"`,
       );
@@ -303,7 +307,11 @@ export function createGraphClient(config) {
         `/workbook/worksheets/${encodeURIComponent(worksheetName)}` +
         `/range(address='${address}')`;
 
-      await request('patch', endpoint, { values });
+      const body = {};
+      if (values !== undefined) body.values = values;
+      if (format !== undefined) body.format = format;
+
+      await request('patch', endpoint, body);
     },
 
     /**

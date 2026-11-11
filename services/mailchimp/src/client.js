@@ -1,9 +1,15 @@
 /**
  * @fileoverview Cliente autenticado para Mailchimp API v3.
  *
- * Autenticación: API Key en header `Authorization: apikey {key}`.
- * La API Key se lee de process.env.MAILCHIMP_API_KEY.
- * El server prefix (ej: us21) se deriva de la API Key o de MAILCHIMP_SERVER_PREFIX.
+ * Autenticación (RF-011 — la tesis exige OAuth 2.0 para Mailchimp):
+ *   - `mode: 'oauth2'`  → OAuth 2.0 Authorization Code Flow.
+ *                          El token se obtiene en `https://login.mailchimp.com/oauth2/token`
+ *                          y se envía como `Authorization: Bearer <token>`.
+ *                          Mailchimp NO expira estos tokens (no hay refresh token):
+ *                          la revocación la hace el usuario que desconectó la app.
+ *   - `mode: 'api_key'`  → API Key de cuenta (`Authorization: apikey <key>`).
+ *                          NO es OAuth 2.0: se conserva como modo explícito y
+ *                          documentado (docs/decisions.md, ADR-001).
  *
  * Endpoints utilizados:
  *   PUT  /lists/{list_id}/members/{subscriber_hash}   (crear/actualizar suscriptor)
@@ -25,9 +31,17 @@ import {
   MemberResponseSchema,
   TagsResponseSchema,
 } from './schemas.js';
+import {
+  createStaticTokenProvider,
+  createAuthorizationCodeProvider,
+  OAuth2Error,
+} from '../../common/oauth2.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
+
+/** Endpoint de tokens OAuth 2.0 de Mailchimp. */
+const MAILCHIMP_TOKEN_ENDPOINT = 'https://login.mailchimp.com/oauth2/token';
 
 /**
  * Error de autenticación con Mailchimp (401).
@@ -82,27 +96,98 @@ export function getServerPrefix(apiKey) {
 }
 
 /**
+ * Determina el modo de autenticación a partir de la configuración explícita
+ * y de las variables de entorno.
+ *
+ * @param {object} config - Configuración recibida por el factory
+ * @returns {'oauth2'|'api_key'} Modo de autenticación resuelto
+ * @throws {MailchimpAuthError} Si no hay ninguna credencial utilizable
+ */
+export function resolverModoAutenticacion(config = {}) {
+  const mode = config.mode ?? process.env.MAILCHIMP_AUTH_MODE ?? null;
+
+  if (mode === 'oauth2' || mode === 'api_key') {
+    return mode;
+  }
+
+  const clientId = config.clientId ?? process.env.MAILCHIMP_CLIENT_ID;
+  const clientSecret = config.clientSecret ?? process.env.MAILCHIMP_CLIENT_SECRET;
+  const code = config.code ?? process.env.MAILCHIMP_OAUTH_CODE;
+  const accessToken = config.accessToken ?? process.env.MAILCHIMP_ACCESS_TOKEN;
+
+  if ((clientId && clientSecret && code) || accessToken) {
+    return 'oauth2';
+  }
+
+  const apiKey = config.apiKey ?? process.env.MAILCHIMP_API_KEY;
+  if (apiKey) {
+    return 'api_key';
+  }
+
+  throw new MailchimpAuthError(
+    'No se configuró ninguna credencial de Mailchimp. ' +
+      'Para OAuth 2.0 (RF-011) define MAILCHIMP_CLIENT_ID, MAILCHIMP_CLIENT_SECRET y ' +
+      'MAILCHIMP_OAUTH_CODE (o MAILCHIMP_ACCESS_TOKEN si el token ya fue emitido); ' +
+      'alternativamente define MAILCHIMP_API_KEY y acepta que NO cumple OAuth 2.0.',
+  );
+}
+
+/**
  * Construye y devuelve un cliente configurado para Mailchimp API v3.
  *
  * @param {object} config - Configuración del cliente
- * @param {string} [config.apiKey] - API Key de Mailchimp. Si no se pasa,
- *   se lee de process.env.MAILCHIMP_API_KEY.
- * @param {string} [config.serverPrefix] - Prefijo del servidor (us21, etc.).
- *   Si no se pasa, se deriva de la API Key.
+ * @param {'oauth2'|'api_key'} [config.mode] - Modo de autenticación
+ * @param {string} [config.apiKey] - API Key de cuenta (modo api_key)
+ * @param {string} [config.serverPrefix] - Prefijo del servidor (us21, etc.)
+ * @param {string} [config.accessToken] - Token OAuth 2.0 ya emitido
+ * @param {string} [config.clientId] - Client ID de la app OAuth
+ * @param {string} [config.clientSecret] - Client Secret de la app OAuth
+ * @param {string} [config.code] - Código de autorización (authorization code flow)
+ * @param {string} [config.redirectUri] - Redirect URI registrado
+ * @param {object} [config.tokenProvider] - Proveedor de tokens inyectado (pruebas)
+ * @param {Function} [config.adapter] - Adapter de axios inyectado (pruebas)
  * @returns {object} Instancia del cliente Mailchimp
- * @throws {MailchimpAuthError} Si no se configura ninguna API Key
+ * @throws {MailchimpAuthError} Si no se configura ninguna API Key ni OAuth
  */
 export function createMailchimpClient(config = {}) {
-  const apiKey = config.apiKey || process.env.MAILCHIMP_API_KEY;
+  const modo = resolverModoAutenticacion(config);
 
-  if (!apiKey) {
+  const apiKey = config.apiKey ?? process.env.MAILCHIMP_API_KEY;
+  const serverPrefix =
+    config.serverPrefix ??
+    process.env.MAILCHIMP_SERVER_PREFIX ??
+    (modo === 'api_key' && apiKey ? getServerPrefix(apiKey) : null);
+
+  let tokenProvider = config.tokenProvider ?? null;
+  if (!tokenProvider && modo === 'oauth2') {
+    const accessToken = config.accessToken ?? process.env.MAILCHIMP_ACCESS_TOKEN;
+    if (accessToken) {
+      tokenProvider = createStaticTokenProvider({
+        token: accessToken,
+        label: 'Mailchimp (OAuth 2.0)',
+      });
+    } else {
+      tokenProvider = createAuthorizationCodeProvider({
+        tokenEndpoint: config.tokenEndpoint ?? MAILCHIMP_TOKEN_ENDPOINT,
+        clientId: config.clientId ?? process.env.MAILCHIMP_CLIENT_ID,
+        clientSecret: config.clientSecret ?? process.env.MAILCHIMP_CLIENT_SECRET,
+        code: config.code ?? process.env.MAILCHIMP_OAUTH_CODE,
+        redirectUri: config.redirectUri ?? process.env.MAILCHIMP_REDIRECT_URI,
+        fetchImpl: config.fetchImpl,
+        label: 'Mailchimp',
+      });
+    }
+  }
+
+  if (!serverPrefix) {
     throw new MailchimpAuthError(
-      'No se configuró MAILCHIMP_API_KEY. ' +
-        'Define la variable de entorno con una API Key válida de Mailchimp.',
+      'No se pudo determinar el server prefix (datacenter) de Mailchimp. ' +
+        'En modo OAuth 2.0 el datacenter NO se puede derivar de la credencial: ' +
+        'define MAILCHIMP_SERVER_PREFIX (ej: us21, el que aparece en ' +
+        'https://us21.admin.mailchimp.com).',
     );
   }
 
-  const serverPrefix = config.serverPrefix || getServerPrefix(apiKey);
   const BASE_URL = `https://${serverPrefix}.api.mailchimp.com/3.0`;
 
   const httpClient = axios.create({
@@ -111,8 +196,8 @@ export function createMailchimpClient(config = {}) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `apikey ${apiKey}`,
     },
+    ...(config.adapter ? { adapter: config.adapter } : {}),
   });
 
   // Reintentos automáticos con backoff exponencial para 429 y 5xx
@@ -133,12 +218,42 @@ export function createMailchimpClient(config = {}) {
   });
 
   /**
+   * Construye la cabecera Authorization según el modo activo.
+   * @private
+   * @returns {Promise<string>} Valor de la cabecera Authorization
+   */
+  async function authorizationHeader() {
+    if (modo === 'api_key') {
+      return `apikey ${apiKey}`;
+    }
+    try {
+      const token = await tokenProvider.getAccessToken();
+      return `Bearer ${token}`;
+    } catch (error) {
+      if (error instanceof OAuth2Error) {
+        throw new MailchimpAuthError(
+          `No se pudo obtener un token OAuth 2.0 de Mailchimp: ${error.message}`,
+          error,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Ejecuta una petición a Mailchimp y mapea errores a excepciones tipadas.
    * @private
    */
   async function request(method, endpoint, data = undefined) {
+    const authorization = await authorizationHeader();
+
     try {
-      const response = await httpClient.request({ method, url: endpoint, data });
+      const response = await httpClient.request({
+        method,
+        url: endpoint,
+        data,
+        headers: { Authorization: authorization },
+      });
       return response.data;
     } catch (error) {
       const status = error?.response?.status;
@@ -146,14 +261,18 @@ export function createMailchimpClient(config = {}) {
 
       if (status === 401) {
         throw new MailchimpAuthError(
-          `Acceso denegado a Mailchimp API (HTTP 401). ` +
-            `Verifica la API Key y los permisos de la cuenta.`,
+          modo === 'api_key'
+            ? 'Acceso denegado a Mailchimp API (HTTP 401). Verifica la API Key y los permisos de la cuenta.'
+            : 'Acceso denegado a Mailchimp API (HTTP 401). El token OAuth 2.0 fue revocado: ' +
+              'hay que rehacer el flujo de autorización.',
           error,
         );
       }
 
       throw new MailchimpApiError(
-        `Error en Mailchimp API [${method.toUpperCase()} ${endpoint}] HTTP ${status ?? 'N/A'}: ${mailchimpError?.title ?? mailchimpError?.message ?? error.message}`,
+        `Error en Mailchimp API [${method.toUpperCase()} ${endpoint}] ` +
+          `HTTP ${status ?? 'N/A'}: ` +
+          `${mailchimpError?.title ?? mailchimpError?.message ?? error.message}`,
         status,
         mailchimpError,
         error,
@@ -162,6 +281,16 @@ export function createMailchimpClient(config = {}) {
   }
 
   return {
+    /**
+     * Modo de autenticación efectivo del cliente ('oauth2' | 'api_key').
+     */
+    modoAutenticacion: modo,
+
+    /**
+     * Server prefix (datacenter) en uso.
+     */
+    serverPrefix,
+
     /**
      * Crea o actualiza un suscriptor en una lista de Mailchimp.
      * Utiliza PUT /lists/{list_id}/members/{subscriber_hash} (upsert).
@@ -173,7 +302,7 @@ export function createMailchimpClient(config = {}) {
      * @param {'subscribed'|'unsubscribed'|'cleaned'|'pending'} [data.status] - Estado de suscripción (default: 'subscribed')
      * @param {string[]} [data.tags] - Tags para etiquetar al suscriptor
      * @returns {Promise<object>} Suscriptor creado o actualizado
-     * @throws {MailchimpAuthError} Si la API Key es inválida
+     * @throws {MailchimpAuthError} Si la credencial es inválida o fue revocada
      * @throws {MailchimpApiError} Por errores de red o API de Mailchimp
      */
     async addOrUpdateMember(listId, email, data = {}) {
@@ -202,7 +331,7 @@ export function createMailchimpClient(config = {}) {
      * @param {string} email - Correo electrónico del suscriptor
      * @param {string} tag - Tag a añadir (ej: 'nuevo', 'onboarding', 'bienvenida')
      * @returns {Promise<object>} Resultado de la operación de tag
-     * @throws {MailchimpAuthError} Si la API Key es inválida
+     * @throws {MailchimpAuthError} Si la credencial es inválida o fue revocada
      * @throws {MailchimpApiError} Por errores de red o API de Mailchimp
      */
     async addTag(listId, email, tag) {

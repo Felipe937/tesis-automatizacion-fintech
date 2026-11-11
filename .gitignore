@@ -149,4 +149,24 @@ vite.config.ts.timestamp-*
 infrastructure/n8n_data/
 infrastructure/postgres/
 infrastructure/data/
+
+# Estado de certificados TLS / ACME (contiene claves privadas de la cuenta ACME).
+# La ruta real en este repositorio es infrastructure/traefik/certs/
+infrastructure/traefik/certs/
 infrastructure/config/traefik/certs/
+
+# Certificados y claves privadas PEM sueltos
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Ficheros de entorno (los ejemplos .env.example sí se versionan)
+.env
+.env.*
+!.env.example
+
+# Salidas de verificación y artefactos locales
+infrastructure/verification/
+*.log
+

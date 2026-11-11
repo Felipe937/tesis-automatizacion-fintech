@@ -32,6 +32,35 @@ export const ETAPAS_LEAD = [
 ];
 
 /**
+ * Etapas comerciales del embudo según el mockup del dashboard ejecutivo
+ * (§4.4, Figura «Dashboard Ejecutivo — Asesor Fintech»): cuatro fases que
+ * agregan los seis estados del MER.
+ *
+ * El estado `inactivo` queda **fuera del embudo**: no es una etapa comercial,
+ * por lo que se reporta aparte y no altera el 100 % de la participación.
+ */
+export const ETAPAS_COMERCIALES = [
+  { etiqueta: 'Nuevo', estados: ['nuevo'] },
+  { etiqueta: 'En seguimiento', estados: ['prospecto'] },
+  { etiqueta: 'Cita agendada', estados: ['cita_pendiente', 'cita_confirmada'] },
+  { etiqueta: 'Convertido', estados: ['cliente'] },
+];
+
+/**
+ * Plataformas cuyo estado de sincronización muestra el dashboard, con los
+ * workflows de n8n que las integran (mockup, bloque «Monitoreo de integraciones»).
+ */
+export const PLATAFORMAS_MONITOREDAS = [
+  { plataforma: 'HubSpot CRM', workflows: ['captura-leads', 'secuencias-email'] },
+  { plataforma: 'Mailchimp', workflows: ['captura-leads', 'secuencias-email'] },
+  { plataforma: 'Calendly', workflows: ['captura-leads'] },
+  {
+    plataforma: 'Excel / OneDrive',
+    workflows: ['conciliacion-excel', 'alertas-financieras', 'dashboard-ejecutivo'],
+  },
+];
+
+/**
  * Calcula la distribución de leads por etapa del ciclo comercial.
  *
  * @param {Array<{ estado: string }>} leads - Array de leads con su estado
@@ -68,9 +97,138 @@ export function calcularLeadsPorEtapa(leads) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Calcula la tabla «Seguimiento comercial» del mockup: cada estado del MER con
+ * su etapa comercial agregada, la cantidad de leads y su participación
+ * porcentual sobre el total del embudo.
+ *
+ * El estado `inactivo` no pertenece al embudo: se informa con participación 0
+ * para no alterar la suma (que debe ser 100 %).
+ *
+ * @param {Array<{ estado: string }>} leads - Leads del periodo
+ * @returns {Array<{ estado: string, etapaComercial: string, cantidad: number, participacionPorcentaje: number }>}
+ */
+export function calcularSeguimientoComercial(leads) {
+  const total = Array.isArray(leads) ? leads.length : 0;
+  const conteo = {};
+  (leads ?? []).forEach((lead) => {
+    conteo[lead.estado] = (conteo[lead.estado] ?? 0) + 1;
+  });
+
+  const filas = ETAPAS_COMERCIALES.flatMap((etapa) =>
+    etapa.estados.map((estado) => {
+      const cantidad = conteo[estado] ?? 0;
+      return {
+        estado,
+        etapaComercial: etapa.etiqueta,
+        cantidad,
+        participacionPorcentaje:
+          total > 0 ? Math.round((cantidad / total) * 10000) / 100 : 0,
+      };
+    }),
+  );
+
+  const inactivos = conteo.inactivo ?? 0;
+  filas.push({
+    estado: 'inactivo',
+    etapaComercial: '— (fuera del embudo)',
+    cantidad: inactivos,
+    participacionPorcentaje: 0,
+  });
+
+  return filas;
+}
+
+/**
+ * Calcula los indicadores clave de gestión (KPI) del mockup.
+ *
+ * - Leads registradas: leads captados en el periodo.
+ * - Citas agendadas: citas del periodo, excluidas las canceladas.
+ * - Inversiones registradas: inversiones con fecha de registro en el periodo.
+ * - Conversión: porcentaje de leads que alcanzaron el estado «cliente».
+ *
+ * @param {object} params - Parámetros
+ * @param {Array<{ estado: string }>} params.leads - Leads del periodo
+ * @param {Array<{ estado: string, fecha_registro: string }>} params.citas - Citas del periodo
+ * @param {Array<{ fecha_registro: string }>} params.inversiones - Inversiones
+ * @param {string} params.periodoInicio - Inicio del periodo (ISO 8601)
+ * @param {string} params.periodoFin - Fin del periodo (ISO 8601)
+ * @returns {object} Indicadores clave
+ */
+export function calcularKpis({ leads = [], citas = [], inversiones = [], periodoInicio, periodoFin }) {
+  const totalLeads = leads.length;
+  const convertidos = leads.filter((l) => l.estado === 'cliente').length;
+  const citasAgendadas = citas.filter((c) => c.estado !== 'cancelada').length;
+  const dentroDelPeriodo = (fecha) => {
+    if (!fecha) return false;
+    const instante = new Date(fecha).getTime();
+    return (
+      instante >= new Date(periodoInicio).getTime() &&
+      instante <= new Date(periodoFin).getTime()
+    );
+  };
+
+  return {
+    leadsRegistradas: totalLeads,
+    citasAgendadas,
+    inversionesRegistradas: inversiones.filter((inv) => dentroDelPeriodo(inv.fecha_registro)).length,
+    conversionPorcentaje:
+      totalLeads > 0 ? Math.round((convertidos / totalLeads) * 10000) / 100 : 0,
+  };
+}
+
+/**
+ * Calcula el bloque «Monitoreo de integraciones» del mockup: por plataforma,
+ * la fecha de la última sincronización y su estado, a partir de las
+ * ejecuciones registradas en `automation_log`.
+ *
+ * @param {Array<{ workflow_id: string, timestamp_inicio: string, estado: string }>} ejecuciones
+ * @returns {Array<{ plataforma: string, ultimaSincronizacion: string|null, estado: string }>}
+ */
+export function calcularMonitoreoIntegraciones(ejecuciones = []) {
+  return PLATAFORMAS_MONITOREDAS.map(({ plataforma, workflows }) => {
+    const propias = (ejecuciones ?? []).filter((e) => workflows.includes(e.workflow_id));
+    if (propias.length === 0) {
+      return { plataforma, ultimaSincronizacion: null, estado: 'Sin ejecuciones' };
+    }
+    const ultima = propias.reduce((max, e) =>
+      new Date(e.timestamp_inicio) > new Date(max) ? e.timestamp_inicio : max,
+    propias[0].timestamp_inicio);
+    const estado = propias.find((e) => e.timestamp_inicio === ultima)?.estado ?? 'desconocido';
+    return {
+      plataforma,
+      ultimaSincronizacion: ultima,
+      estado: estado === 'exito' ? 'Correcto' : estado === 'advertencia' ? 'Con advertencias' : 'Con errores',
+    };
+  });
+}
+
+/**
+ * Calcula el bloque «Control de actualización» del mockup.
+ *
+ * @param {Array<{ plataforma: string, estado: string }>} monitoreo
+ * @param {string} fechaActualizacion - Fecha de generación del dashboard
+ * @returns {{ ultimaActualizacion: string, estadoGeneral: string }}
+ */
+export function calcularControlActualizacion(monitoreo, fechaActualizacion) {
+  const conErrores = (monitoreo ?? []).filter(
+    (m) => m.estado !== 'Correcto' && m.estado !== 'Sin ejecuciones',
+  );
+  return {
+    ultimaActualizacion: fechaActualizacion,
+    estadoGeneral:
+      conErrores.length === 0 ? 'Sincronización correcta' : 'Revisar sincronizaciones con errores',
+  };
+}
+
+/**
  * Calcula la tabla de campañas Mailchimp del periodo.
  *
- * @param {Array<{ id_campaign: number, nombre: string, estado: string }>} campañas
+ * `enviadas`, `tasaApertura` y `clicsGenerados` son métricas de REPORTE de
+ * Mailchimp (no están almacenadas en el MER): sólo se rellenan si el
+ * orquestador las entrega en `metricasCampañas`. `suscriptores` sí es un dato
+ * del MER: se obtiene de `campaign_lead`.
+ *
+ * @param {Array<{ id_campaign: number, nombre: string, estado: string, suscriptores?: number }>} campañas
  * @param {Array<{ id_campaign: number, enviadas: number, tasaApertura: number, clicsGenerados: number }>} metricasCampañas
  * @returns {Array<object>} Lista de campañas con sus métricas
  */
@@ -93,6 +251,7 @@ export function calcularCampañasMailchimp(campañas, metricasCampañas = []) {
       enviadas: metrica.enviadas,
       tasaApertura: metrica.tasaApertura,
       clicsGenerados: metrica.clicsGenerados,
+      suscriptores: c.suscriptores ?? 0,
     };
   });
 }
@@ -104,7 +263,15 @@ export function calcularCampañasMailchimp(campañas, metricasCampañas = []) {
 /**
  * Filtra citas confirmadas que caen dentro de la semana indicada.
  *
- * @param {Array<{ id_appointment: number, id_lead: number, nombreLead: string, fecha_hora_inicio: string, fecha_hora_fin?: string, enlace_calendly?: string, estado: string }>} citas
+ * @param {Array<{
+ *   id_appointment: number,
+ *   id_lead: number,
+ *   nombreLead: string,
+ *   fecha_hora_inicio: string,
+ *   fecha_hora_fin?: string,
+ *   enlace_calendly?: string,
+ *   estado: string
+ * }>} citas
  * @param {string} fechaInicioSemana - Inicio de la semana (ISO 8601)
  * @param {string} fechaFinSemana - Fin de la semana (ISO 8601)
  * @returns {Array<object>} Citas confirmadas en la semana
@@ -189,6 +356,12 @@ export function calcularResumenFinanciero(inversiones, fechaActual) {
     saldoTotalInversionesActivas: Math.round(saldoTotal * 100) / 100,
     numeroOperacionesMesActual: operacionesMesActual,
     variacionPorcentualMesAnterior: Math.round(variacionPorcentual * 100) / 100,
+    // Líneas del bloque «Resumen de inversiones» del mockup (§4.4)
+    totalOperaciones: inversiones.length,
+    montoAcumulado: Math.round(saldoTotal * 100) / 100,
+    operacionesPendientes: inversiones.filter((inv) => inv.estado === 'activa').length,
+    operacionesCompletadas: inversiones.filter((inv) => inv.estado === 'vencida').length,
+    operacionesCanceladas: inversiones.filter((inv) => inv.estado === 'cancelada').length,
   };
 }
 
@@ -210,6 +383,9 @@ export function calcularResumenFinanciero(inversiones, fechaActual) {
  * @param {Array} params.inversiones - Lista de inversiones
  * @param {string} params.fechaActual - Fecha de referencia actual (ISO 8601)
  * @param {boolean} [params.datosSinteticos=false] - Datos sintéticos
+ * @param {'postgres'|'sintetico'} [params.fuenteDatos] - Origen de los datos
+ * @param {object} [params.resumenAutomatizaciones] - Trazabilidad de automation_log
+ * @param {Array} [params.ejecuciones] - Ejecuciones de automation_log (monitoreo de integraciones)
  * @returns {object} Informe del dashboard válido con DashboardOutputSchema
  */
 export function generarDashboard(params) {
@@ -224,12 +400,34 @@ export function generarDashboard(params) {
     inversiones,
     fechaActual = new Date().toISOString(),
     datosSinteticos = false,
+    fuenteDatos = datosSinteticos ? 'sintetico' : 'postgres',
+    resumenAutomatizaciones = null,
+    ejecuciones = [],
   } = params;
 
   const leadsPorEtapa = calcularLeadsPorEtapa(leads);
   const campañasMailchimp = calcularCampañasMailchimp(campañas, metricasCampañas);
   const citasSemana = calcularCitasSemana(citas, periodoInicio, periodoFin);
   const resumenFinanciero = calcularResumenFinanciero(inversiones, fechaActual);
+
+  const seguimientoComercial = calcularSeguimientoComercial(leads);
+  const kpis = calcularKpis({ leads, citas, inversiones, periodoInicio, periodoFin });
+  const monitoreoIntegraciones = calcularMonitoreoIntegraciones(ejecuciones);
+  const controlActualizacion = calcularControlActualizacion(
+    monitoreoIntegraciones,
+    fechaActual,
+  );
+
+  const metricasMailchimpDisponibles = metricasCampañas.length > 0;
+
+  const advertencias = [];
+  if (!metricasMailchimpDisponibles) {
+    advertencias.push(
+      'Las métricas de reporte de Mailchimp (enviadas, tasa de apertura, clics) ' +
+        'no están almacenadas en el MER y no fueron provistas por el orquestador: ' +
+        'se reportan como 0. El dato de suscriptores sí proviene de campaign_lead.',
+    );
+  }
 
   return {
     workflowId,
@@ -238,10 +436,18 @@ export function generarDashboard(params) {
       inicio: periodoInicio,
       fin: periodoFin,
     },
+    kpis,
     leadsPorEtapa,
+    seguimientoComercial,
     campañasMailchimp,
     citasSemana,
     resumenFinanciero,
-    datosSinteticos,
+    monitoreoIntegraciones,
+    controlActualizacion,
+    ...(resumenAutomatizaciones ? { resumenAutomatizaciones } : {}),
+    metricasMailchimpDisponibles,
+    fuenteDatos,
+    datosSinteticos: fuenteDatos === 'sintetico',
+    advertencias,
   };
 }
