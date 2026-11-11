@@ -1,0 +1,12 @@
+{
+  "name": "@tesis/common",
+  "version": "1.0.0",
+  "description": "Módulos compartidos entre servicios (helpers de OAuth 2.0). Sin dependencias externas.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test __tests__/oauth2.test.js",
+    "lint": "node ../scripts/lint.mjs ."
+  },
+  "license": "MIT"
+}

@@ -1,20 +1,43 @@
-name: CI — excel-reconciler
+name: CI — Tesis IS25237
 
 on:
   push:
-    paths:
-      - 'services/excel-reconciler/**'
+    branches: ['**']
   pull_request:
-    paths:
-      - 'services/excel-reconciler/**'
+  workflow_dispatch:
 
 jobs:
-  test:
-    name: Run unit tests
+  services:
+    name: ${{ matrix.service }}
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: services/excel-reconciler
+        working-directory: ${{ matrix.path }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: common
+            path: services/common
+            install: false
+          - service: excel-reconciler
+            path: services/excel-reconciler
+            install: true
+          - service: hubspot
+            path: services/hubspot
+            install: true
+          - service: mailchimp
+            path: services/mailchimp
+            install: true
+          - service: calendly
+            path: services/calendly
+            install: true
+          - service: metrics
+            path: services/metrics
+            install: true
+          - service: dashboard
+            path: services/dashboard
+            install: true
 
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +46,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: services/excel-reconciler/package-lock.json
 
       - name: Install dependencies
+        if: matrix.install
+        run: npm ci
+
+      # La prueba de integración de `metrics` cubre también el componente de
+      # dashboard (paquete hermano): sin estas dependencias el fichero falla al
+      # importar `zod`/`pg` del paquete dashboard.
+      - name: Install dependencies (dashboard, dependencia de la prueba de integración)
+        if: matrix.service == 'metrics'
+        working-directory: services/dashboard
         run: npm ci
 
       - name: Lint
@@ -34,3 +64,86 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  workflows:
+    name: Workflows n8n (JSON válido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar JSON de los workflows
+        run: |
+          for f in workflows/*.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8')); console.log('OK $f')"
+          done
+
+      - name: Validar que cada workflow tiene nodos y conexiones
+        run: |
+          node -e "
+          const fs = require('fs');
+          for (const f of fs.readdirSync('workflows')) {
+            const w = JSON.parse(fs.readFileSync('workflows/' + f, 'utf8'));
+            if (!w.nodes || w.nodes.length === 0) throw new Error(f + ': sin nodos');
+            const nombres = w.nodes.map((n) => n.name);
+            for (const salidas of Object.values(w.connections || {})) {
+              for (const rama of salidas.main || []) {
+                for (const c of rama) {
+                  if (!nombres.includes(c.node)) throw new Error(f + ': conexión rota hacia ' + c.node);
+                }
+              }
+            }
+            console.log('OK ' + f + ' (' + w.nodes.length + ' nodos)');
+          }
+          "
+
+  integration:
+    name: Integración con PostgreSQL (MER real)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: n8n_user
+          POSTGRES_PASSWORD: clave-de-prueba-temporal
+          POSTGRES_DB: n8n_fintech_test
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            services/metrics/package-lock.json
+            services/dashboard/package-lock.json
+
+      - name: Instalar dependencias (metrics)
+        working-directory: services/metrics
+        run: npm ci
+
+      - name: Instalar dependencias (dashboard)
+        working-directory: services/dashboard
+        run: npm ci
+
+      - name: Prueba de integración contra el esquema real del MER
+        working-directory: services/metrics
+        env:
+          INTEGRATION_PG_URL: postgresql://n8n_user:clave-de-prueba-temporal@127.0.0.1:5432/n8n_fintech_test
+        run: node --test src/__tests__/integration.test.js
+
+  sql:
+    name: Esquema PostgreSQL (init.sql idempotente)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar init.sql sobre PostgreSQL limpio
+        run: node infrastructure/scripts/verify-init.mjs

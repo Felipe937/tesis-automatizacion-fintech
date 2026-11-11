@@ -2,10 +2,8 @@
 # docker-compose.yml — n8n Fintech Colombia (Self-Hosted / VPS)
 # =============================================================================
 # Cumplimiento: Ley 1581 de 2012 (Protección de Datos Personales - Colombia)
-# Arquitectura: Traefik (Reverse Proxy + TLS) → n8n → PostgreSQL
+# Arquitectura: Traefik (Reverse Proxy + TLS) → n8n → PostgreSQL + servicios Node.js
 # =============================================================================
-
-version: "3.9"
 
 # ---------------------------------------------------------------------------
 # REDES
@@ -106,8 +104,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-n8n_fintech}
       POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}            # Obligatorio — ver .env
-      # Requerir SSL en las conexiones a la base de datos
-      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+      # Requerir SSL en las conexiones a la base de datos.
+      # Se fija explícitamente la codificación UTF8: el esquema contiene textos
+      # en español (comentarios y metadatos) y el servicio debe poder
+      # almacenarlos sin depender del locale por defecto de la imagen.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --encoding=UTF8"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n_user} -d ${POSTGRES_DB:-n8n_fintech}"]
       interval: 30s
@@ -209,21 +210,38 @@ services:
 
       # -----------------------------------------------------------------------
       # INTEGRACIÓN: HUBSPOT CRM
-      # (Configurar credencial en n8n UI y referenciar como {{$credentials}})
+      # (OAuth 2.0 — RF-011. Definir HUBSPOT_AUTH_MODE=oauth2 para usar
+      #  HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET / HUBSPOT_REFRESH_TOKEN.
+      #  HUBSPOT_ACCESS_TOKEN corresponde al modo Private App, que NO es OAuth 2.0.
+      #  Configurar además la credencial en n8n y referenciarla con $credentials.)
       # -----------------------------------------------------------------------
-      HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
+      HUBSPOT_AUTH_MODE: ${HUBSPOT_AUTH_MODE:-oauth2}
+      HUBSPOT_CLIENT_ID: ${HUBSPOT_CLIENT_ID}
+      HUBSPOT_CLIENT_SECRET: ${HUBSPOT_CLIENT_SECRET}
+      HUBSPOT_REFRESH_TOKEN: ${HUBSPOT_REFRESH_TOKEN}
+      HUBSPOT_ACCESS_TOKEN: ${HUBSPOT_ACCESS_TOKEN}
       HUBSPOT_PORTAL_ID: ${HUBSPOT_PORTAL_ID}
 
       # -----------------------------------------------------------------------
       # INTEGRACIÓN: MAILCHIMP
+      # (OAuth 2.0 — RF-011. El datacenter es obligatorio en modo oauth2.)
       # -----------------------------------------------------------------------
+      MAILCHIMP_AUTH_MODE: ${MAILCHIMP_AUTH_MODE:-oauth2}
+      MAILCHIMP_CLIENT_ID: ${MAILCHIMP_CLIENT_ID}
+      MAILCHIMP_CLIENT_SECRET: ${MAILCHIMP_CLIENT_SECRET}
+      MAILCHIMP_OAUTH_CODE: ${MAILCHIMP_OAUTH_CODE}
+      MAILCHIMP_ACCESS_TOKEN: ${MAILCHIMP_ACCESS_TOKEN}
       MAILCHIMP_API_KEY: ${MAILCHIMP_API_KEY}
-      MAILCHIMP_SERVER_PREFIX: ${MAILCHIMP_SERVER_PREFIX}       # ej: us21
+      MAILCHIMP_SERVER_PREFIX: ${MAILCHIMP_SERVER_PREFIX}
+      MAILCHIMP_LIST_ID: ${MAILCHIMP_LIST_ID}
 
       # -----------------------------------------------------------------------
       # INTEGRACIÓN: CALENDLY
+      # (OAuth 2.1 o Personal Access Token — ver docs/decisions.md ADR-001)
       # -----------------------------------------------------------------------
-      CALENDLY_API_KEY: ${CALENDLY_API_KEY}
+      CALENDLY_AUTH_MODE: ${CALENDLY_AUTH_MODE:-pat}
+      CALENDLY_ACCESS_TOKEN: ${CALENDLY_ACCESS_TOKEN}
+      CALENDLY_API_TOKEN: ${CALENDLY_API_TOKEN}
       CALENDLY_WEBHOOK_SIGNING_KEY: ${CALENDLY_WEBHOOK_SIGNING_KEY}
       CALENDLY_ORG_URI: ${CALENDLY_ORG_URI}
 
@@ -235,6 +253,20 @@ services:
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
       MICROSOFT_REDIRECT_URI: https://${DOMAIN_NAME}/rest/oauth2-credential/callback
+
+      # -----------------------------------------------------------------------
+      # CONFIGURACIÓN DE LOS WORKFLOWS (leída por los workflows n8n con $env)
+      # -----------------------------------------------------------------------
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      # Línea base del proceso manual para las métricas VD1/VD2 (§1.1.1).
+      # Debe sustituirse por la medición real del piloto: ver docs/decisions.md ADR-004.
+      METRICS_LINEA_BASE_TIEMPO_SEGUNDOS: ${METRICS_LINEA_BASE_TIEMPO_SEGUNDOS:-120}
+      METRICS_LINEA_BASE_TASA_ERROR_PORCENTAJE: ${METRICS_LINEA_BASE_TASA_ERROR_PORCENTAJE:-5}
+      METRICS_UMBRAL_OBSERVACIONES: ${METRICS_UMBRAL_OBSERVACIONES:-30}
+      # Dashboard ejecutivo (§4.4)
+      DASHBOARD_EXCEL_DRIVE_ITEM_ID: ${DASHBOARD_EXCEL_DRIVE_ITEM_ID}
+      DASHBOARD_EXCEL_WORKSHEET: ${DASHBOARD_EXCEL_WORKSHEET:-Dashboard Ejecutivo}
+      DASHBOARD_PERIODO_HORAS: ${DASHBOARD_PERIODO_HORAS:-168}
 
     labels:
       - "traefik.enable=true"
@@ -287,4 +319,74 @@ services:
       RECONCILER_API_KEY: ${RECONCILER_API_KEY}
       # Configuración del servidor
       PORT: "3000"
+      HOST: "0.0.0.0"
+
+  # ===========================================================================
+  # 5. METRICS — Microservicio HTTP de métricas VD1/VD2
+  # ===========================================================================
+  # Lee las ejecuciones reales de `automation_log` en PostgreSQL y calcula los
+  # indicadores de desempeño comparados contra la línea base manual.
+  # Es invocado por el workflow `reporte-semanal` (RF-012).
+  metrics:
+    build:
+      context: ../services
+      dockerfile: metrics/Dockerfile
+    container_name: metrics
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    networks:
+      - fintech_internal      # acceso a PostgreSQL
+      - fintech_services      # salida a Internet (no usada, pero simétrica)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Conexión a PostgreSQL (misma red interna, nunca expuesta al host)
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_fintech}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # API Key para autenticación interna (n8n → metrics)
+      METRICS_API_KEY: ${METRICS_API_KEY}
+      PORT: "3001"
+      HOST: "0.0.0.0"
+
+  # ===========================================================================
+  # 6. DASHBOARD — Microservicio HTTP del dashboard ejecutivo
+  # ===========================================================================
+  # Lee el MER (lead, campaign, campaign_lead, appointment, investment,
+  # automation_log) desde PostgreSQL y actualiza el libro Excel en OneDrive
+  # vía Microsoft Graph API (OAuth 2.0 client credentials).
+  dashboard:
+    build:
+      context: ../services
+      dockerfile: dashboard/Dockerfile
+    container_name: dashboard
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    networks:
+      - fintech_internal      # acceso a PostgreSQL
+      - fintech_services      # salida a Internet (Microsoft Graph)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Conexión a PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_fintech}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Credenciales Microsoft Graph (OAuth 2.0)
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID}
+      # API Key para autenticación interna (n8n → dashboard)
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY}
+      PORT: "3002"
       HOST: "0.0.0.0"

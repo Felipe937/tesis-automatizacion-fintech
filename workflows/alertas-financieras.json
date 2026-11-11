@@ -132,21 +132,22 @@
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{ $credentials.adminEmail }}",
+        "from": "={{ $env.SMTP_SENDER || 'alertas@ejemplo.co' }}",
+        "to": "={{ $env.ADMIN_EMAIL || 'REEMPLAZAR_ADMIN_EMAIL' }}",
         "subject": "Alerta: Discrepancias en conciliación financiera — n8n Fintech",
+        "emailFormat": "text",
         "text": "={{ 'Workflow: alertas-financieras\nSe detectaron discrepancias en la conciliación.\nResumen: ' + JSON.stringify($json.resumen) + '\nDetalle: ' + JSON.stringify($json.resultados) + '\nTimestamp: ' + $now.toISOString() }}",
         "options": {}
       },
       "id": "c0a10004-0000-4000-8000-000000000006",
       "name": "Email Alerta Discrepancias",
-      "type": "n8n-nodes-base.gmailSend",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [720, 360],
       "credentials": {
-        "gmailOAuth2": {
+        "smtp": {
           "id": "CONFIGURAR",
-          "name": "Gmail/SMTP Admin"
+          "name": "SMTP n8n Fintech"
         }
       }
     },
@@ -179,21 +180,22 @@
     },
     {
       "parameters": {
-        "operation": "send",
-        "to": "={{ $credentials.adminEmail }}",
+        "from": "={{ $env.SMTP_SENDER || 'alertas@ejemplo.co' }}",
+        "to": "={{ $env.ADMIN_EMAIL || 'REEMPLAZAR_ADMIN_EMAIL' }}",
         "subject": "Error en workflow Alertas Financieras — n8n Fintech",
+        "emailFormat": "text",
         "text": "={{ 'Workflow: alertas-financieras\nError: ' + $json.error.message + '\nTimestamp: ' + $now.toISOString() }}",
         "options": {}
       },
       "id": "c0a10004-0000-4000-8000-000000000008",
       "name": "Email Alerta Error HTTP",
-      "type": "n8n-nodes-base.gmailSend",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [720, 840],
       "credentials": {
-        "gmailOAuth2": {
+        "smtp": {
           "id": "CONFIGURAR",
-          "name": "Gmail/SMTP Admin"
+          "name": "SMTP n8n Fintech"
         }
       }
     },

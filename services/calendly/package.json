@@ -9,8 +9,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test src/__tests__/client.test.js",
-    "lint": "echo 'Lint pendiente'"
+    "test": "node --test src/__tests__/client.test.js src/__tests__/oauth.test.js",
+    "lint": "node ../scripts/lint.mjs src"
   },
   "dependencies": {
     "axios": "^1.7.7",

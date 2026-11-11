@@ -2,27 +2,37 @@
  * @fileoverview Punto de entrada CLI para el componente de métricas.
  *
  * Recibe parámetros por stdin o por archivo (--payload) y produce un informe
- * de métricas VD1/VD2 en formato JSON y texto plano.
+ * de métricas VD1/VD2 en formato JSON (stdout) y texto plano (stderr).
  *
- * Modo CLI:
- *   echo '{"workflowId":"captura-leads","periodoInicio":"...","periodoFin":"...","lineaBaseTiempoManualSegundos":120,"lineaBaseTasaErrorManual":5}' | node src/index.js
+ * Modo CLI (datos reales desde PostgreSQL):
+ *   echo '{"workflowId":"captura-leads","periodoInicio":"...","periodoFin":"...",
+ *         "fuenteDatos":"postgres","lineaBaseTiempoManualSegundos":120,
+ *         "lineaBaseTasaErrorManual":5}' | node src/index.js
+ *
+ * Modo CLI (demostración con datos sintéticos):
+ *   echo '{"workflowId":"captura-leads","periodoInicio":"...","periodoFin":"...",
+ *         "fuenteDatos":"sintetico","lineaBaseTiempoManualSegundos":120,
+ *         "lineaBaseTasaErrorManual":5}' | node src/index.js
  *
  * MIT License
  * Copyright (c) 2026 Tesis Automatización Fintech — Colombia
  */
 
-import {
-  MetricsInputSchema,
-} from './schemas.js';
-import {
-  calcularMetricasWorkflow,
-  generarInformeTexto,
-} from './calculator.js';
+import { generarInformeMetricas, MetricsValidationError } from './service.js';
+import { generarInformeTexto } from './calculator.js';
+import { PostgresSourceError } from './postgresSource.js';
 
 // ---------------------------------------------------------------------------
 // Serialización de respuesta (stdout JSON)
 // ---------------------------------------------------------------------------
 
+/**
+ * Emite el resultado en stdout con un formato estable para n8n.
+ * @param {boolean} exitoso - Indicador de éxito
+ * @param {object|null} data - Datos del informe
+ * @param {string|null} errorMsg - Mensaje de error
+ * @param {string|null} errorType - Tipo de error
+ */
 function emitResult(exitoso, data, errorMsg = null, errorType = null) {
   const output = exitoso
     ? { exitoso: true, data }
@@ -35,6 +45,10 @@ function emitResult(exitoso, data, errorMsg = null, errorType = null) {
 // Lectura de payload desde stdin o archivo
 // ---------------------------------------------------------------------------
 
+/**
+ * Lee el payload JSON desde `--payload <archivo>` o desde stdin.
+ * @returns {Promise<object>} Payload parseado
+ */
 async function readPayload() {
   const args = process.argv.slice(2);
   const payloadFlagIndex = args.indexOf('--payload');
@@ -52,7 +66,10 @@ async function readPayload() {
 
   if (process.stdin.isTTY) {
     throw new Error(
-      'No se recibió payload. Ejemplo: echo \'{"workflowId":"captura-leads","periodoInicio":"2026-11-02T00:00:00Z","periodoFin":"2026-11-08T23:59:59Z","lineaBaseTiempoManualSegundos":120,"lineaBaseTasaErrorManual":5}\' | node src/index.js',
+      'No se recibió payload. ' +
+        'Ejemplo: echo \'{"workflowId":"captura-leads",' +
+        '"periodoInicio":"2026-11-02T00:00:00Z","periodoFin":"2026-11-08T23:59:59Z",' +
+        '"lineaBaseTiempoManualSegundos":120,"lineaBaseTasaErrorManual":5}\' | node src/index.js',
     );
   }
 
@@ -89,63 +106,40 @@ async function main() {
   try {
     const rawPayload = await readPayload();
 
-    // Validar entrada con Zod
-    const input = MetricsInputSchema.parse(rawPayload);
+    const informe = await generarInformeMetricas(rawPayload);
 
-    // Datos sintéticos de ejemplo para pruebas de desarrollo.
-    // En producción, estos datos vendrían de automation_log de PostgreSQL.
-    const ejecucionesSinteticas = [
-      { latencia_ms: 45, estado: 'exito', registros_procesados: 10 },
-      { latencia_ms: 38, estado: 'exito', registros_procesados: 8 },
-      { latencia_ms: 52, estado: 'exito', registros_procesados: 12 },
-      { latencia_ms: 41, estado: 'error', registros_procesados: 0 },
-      { latencia_ms: 39, estado: 'exito', registros_procesados: 9 },
-      { latencia_ms: 47, estado: 'exito', registros_procesados: 11 },
-      { latencia_ms: 43, estado: 'exito', registros_procesados: 7 },
-      { latencia_ms: 50, estado: 'error', registros_procesados: 0 },
-      { latencia_ms: 44, estado: 'exito', registros_procesados: 10 },
-      { latencia_ms: 40, estado: 'exito', registros_procesados: 9 },
-    ];
-
-    const lineasBase = {
-      tiempoManualSegundos: input.lineaBaseTiempoManualSegundos,
-      tasaErrorManual: input.lineaBaseTasaErrorManual,
-      umbralObservacionesMinimo: input.umbralObservacionesMinimo,
-    };
-
-    const resultado = calcularMetricasWorkflow(ejecucionesSinteticas, lineasBase);
-
-    const informe = {
-      periodo: {
-        inicio: input.periodoInicio,
-        fin: input.periodoFin,
-      },
-      workflowId: input.workflowId,
-      metricas: resultado.metricas,
-      comparacionVD1: resultado.comparacionVD1,
-      comparacionVD2: resultado.comparacionVD2,
-      observacionesUsadas: resultado.observacionesUsadas,
-      advertenciaDatosInsuficientes: resultado.advertenciaDatosInsuficientes,
-      conclusionHipotesis: resultado.conclusionHipotesis,
-      datosSinteticos: true,
-    };
-
-    // Emitir informe JSON
+    // Emitir informe JSON (stdout)
     emitResult(true, informe);
 
     // Emitir informe de texto plano a stderr para no contaminar stdout
     const texto = generarInformeTexto(
-      resultado,
-      input.periodoInicio,
-      input.periodoFin,
-      input.workflowId,
-      true,
+      {
+        metricas: informe.metricas,
+        comparacionVD1: informe.comparacionVD1,
+        comparacionVD2: informe.comparacionVD2,
+        comparacionVD2Registros: informe.comparacionVD2Registros,
+        conclusionHipotesis: informe.conclusionHipotesis,
+        conclusionDefinitiva: informe.conclusionDefinitiva,
+        advertenciaDatosInsuficientes: informe.advertenciaDatosInsuficientes,
+        advertenciaPeriodoSinRegistros: informe.advertenciaPeriodoSinRegistros,
+      },
+      informe.periodo.inicio,
+      informe.periodo.fin,
+      informe.workflowId,
+      informe.datosSinteticos,
     );
     console.error('\n' + texto + '\n');
 
-    console.error('[Metrics] Informe generado exitosamente.');
+    console.error(
+      `[Metrics] Informe generado exitosamente (origen: ${informe.fuenteDatos}).`,
+    );
   } catch (error) {
-    let errorType = error.name ?? 'Error';
+    const errorType =
+      error instanceof MetricsValidationError
+        ? 'MetricsValidationError'
+        : error instanceof PostgresSourceError
+          ? 'PostgresSourceError'
+          : (error.name ?? 'Error');
     emitResult(false, null, error.message, errorType);
     process.exit(1);
   }

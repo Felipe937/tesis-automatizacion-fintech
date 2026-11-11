@@ -1,8 +1,20 @@
 /**
  * @fileoverview Cliente autenticado para Calendly API v2 y validación de webhooks.
  *
- * Autenticación: Bearer token desde process.env.CALENDLY_API_TOKEN.
- * Validación de webhooks: HMAC SHA256 con CALENDLY_WEBHOOK_SECRET.
+ * Autenticación (RF-011 — la tesis exige OAuth 2.0 para las integraciones SaaS):
+ *   - `mode: 'oauth2'` → OAuth 2.1 (Authorization Code + PKCE). El token lo
+ *                       emite Calendly tras el consentimiento explícito del
+ *                       usuario y lo entrega el gestor de credenciales; el
+ *                       cliente lo consume como Bearer.
+ *   - `mode: 'pat'`    → Personal Access Token. Es el mecanismo que Calendly
+ *                       documenta EXPRESAMENTE para aplicaciones internas de
+ *                       una sola cuenta ("Pushing Calendly event and invitee
+ *                       data into your company's CRM"). NO es OAuth 2.0.
+ *
+ * Ver docs/decisions.md (ADR-001) para la justificación de la desviación:
+ * Calendly exige consentimiento interactivo (PKCE S256) y su servidor de
+ * autorización sólo admite `response_type=code`; no ofrece flujo
+ * `client_credentials` para integraciones server-to-server desatendidas.
  *
  * Endpoints utilizados:
  *   GET /scheduled_events/{uuid}
@@ -20,6 +32,7 @@ import {
   EventResponseSchema,
   InviteeResponseSchema,
 } from './schemas.js';
+import { createStaticTokenProvider } from '../../common/oauth2.js';
 
 const CALENDLY_BASE_URL = 'https://api.calendly.com';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -59,23 +72,63 @@ export class CalendlyWebhookValidationError extends Error {
 }
 
 /**
+ * Determina el modo de autenticación a partir de la configuración explícita
+ * y de las variables de entorno.
+ *
+ * @param {object} config - Configuración recibida por el factory
+ * @returns {'oauth2'|'pat'} Modo de autenticación resuelto
+ * @throws {CalendlyAuthError} Si no hay ninguna credencial utilizable
+ */
+export function resolverModoAutenticacion(config = {}) {
+  const mode = config.mode ?? process.env.CALENDLY_AUTH_MODE ?? null;
+
+  if (mode === 'oauth2' || mode === 'pat') {
+    return mode;
+  }
+
+  const oauthToken = config.accessToken ?? process.env.CALENDLY_ACCESS_TOKEN;
+  if (oauthToken) {
+    return 'oauth2';
+  }
+
+  const pat = config.personalAccessToken ?? process.env.CALENDLY_API_TOKEN;
+  if (pat) {
+    return 'pat';
+  }
+
+  throw new CalendlyAuthError(
+    'No se configuró ninguna credencial de Calendly. ' +
+      'Define CALENDLY_ACCESS_TOKEN (token OAuth 2.1 emitido por Calendly) o, ' +
+      'en su defecto, CALENDLY_API_TOKEN (Personal Access Token, que NO es OAuth 2.0).',
+  );
+}
+
+/**
  * Construye y devuelve un cliente configurado para Calendly API v2.
  *
  * @param {object} config - Configuración del cliente
- * @param {string} [config.accessToken] - Bearer token de Calendly.
- *   Si no se pasa, se lee de process.env.CALENDLY_API_TOKEN.
+ * @param {'oauth2'|'pat'} [config.mode] - Modo de autenticación
+ * @param {string} [config.accessToken] - Token OAuth 2.1 (modo oauth2)
+ * @param {string} [config.personalAccessToken] - Personal Access Token (modo pat)
+ * @param {number} [config.tokenExpiresInMs] - Expiración conocida del token (ms)
+ * @param {object} [config.tokenProvider] - Proveedor de tokens inyectado (pruebas)
+ * @param {Function} [config.adapter] - Adapter de axios inyectado (pruebas)
  * @returns {object} Instancia del cliente Calendly
  * @throws {CalendlyAuthError} Si no se configura ningún token
  */
 export function createCalendlyClient(config = {}) {
-  const accessToken = config.accessToken || process.env.CALENDLY_API_TOKEN;
+  const modo = resolverModoAutenticacion(config);
 
-  if (!accessToken) {
-    throw new CalendlyAuthError(
-      'No se configuró CALENDLY_API_TOKEN. ' +
-        'Define la variable de entorno con un Personal Access Token de Calendly.',
-    );
-  }
+  const tokenProvider =
+    config.tokenProvider ??
+    createStaticTokenProvider({
+      token:
+        modo === 'oauth2'
+          ? (config.accessToken ?? process.env.CALENDLY_ACCESS_TOKEN)
+          : (config.personalAccessToken ?? process.env.CALENDLY_API_TOKEN),
+      label: modo === 'oauth2' ? 'Calendly (OAuth 2.1)' : 'Calendly (PAT)',
+      expiresInMs: config.tokenExpiresInMs ?? null,
+    });
 
   const httpClient = axios.create({
     baseURL: CALENDLY_BASE_URL,
@@ -83,8 +136,8 @@ export function createCalendlyClient(config = {}) {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${accessToken}`,
     },
+    ...(config.adapter ? { adapter: config.adapter } : {}),
   });
 
   /**
@@ -92,8 +145,22 @@ export function createCalendlyClient(config = {}) {
    * @private
    */
   async function request(method, endpoint) {
+    let token;
     try {
-      const response = await httpClient.request({ method, url: endpoint });
+      token = await tokenProvider.getAccessToken();
+    } catch (error) {
+      throw new CalendlyAuthError(
+        `No se pudo obtener un token válido para Calendly: ${error.message}`,
+        error,
+      );
+    }
+
+    try {
+      const response = await httpClient.request({
+        method,
+        url: endpoint,
+        headers: { Authorization: `Bearer ${token}` },
+      });
       return response.data;
     } catch (error) {
       const status = error?.response?.status;
@@ -102,7 +169,7 @@ export function createCalendlyClient(config = {}) {
       if (status === 401 || status === 403) {
         throw new CalendlyAuthError(
           `Acceso denegado a Calendly API (HTTP ${status}). ` +
-            `Verifica el token de acceso.`,
+            `Verifica el token y sus scopes (default_organization).`,
           error,
         );
       }
@@ -117,6 +184,11 @@ export function createCalendlyClient(config = {}) {
   }
 
   return {
+    /**
+     * Modo de autenticación efectivo del cliente ('oauth2' | 'pat').
+     */
+    modoAutenticacion: modo,
+
     /**
      * Obtiene los detalles de un evento programado de Calendly.
      *

@@ -52,10 +52,14 @@ export const CalendlyWebhookPayloadSchema = z.object({
 export const EventResponseSchema = z.object({
   uri: z.string().url(),
   name: z.string(),
+  status: z.string().optional(),
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
+  event_type: z.string().url().optional(),
   location: z.object({}).passthrough().optional(),
   invitees: z.array(z.object({})).optional(),
+  created_at: z.string().datetime().optional(),
+  updated_at: z.string().datetime().optional(),
 });
 
 /** Respuesta de GET /scheduled_events/{uuid}/invitees/{uuid} */
