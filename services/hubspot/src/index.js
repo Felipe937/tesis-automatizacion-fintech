@@ -56,9 +56,9 @@ async function readPayload() {
     );
   }
 
+  const readline = await import('node:readline');
   return new Promise((resolve, reject) => {
     let raw = '';
-    const readline = await import('node:readline');
     const rl = readline.createInterface({ input: process.stdin });
 
     rl.on('line', (line) => { raw += line; });

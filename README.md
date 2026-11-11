@@ -365,7 +365,7 @@ npm test
 
 ## 🔄 Flujos de Automatización
 
-El repositorio incluye **cuatro archivos JSON de workflows** en `workflows/`, todos importables en n8n 2.6.3:
+El repositorio incluye **cinco archivos JSON de workflows** en `workflows/`, todos importables en n8n 2.6.3:
 
 | # | Archivo | Nombre | Descripción | RF cubiertos |
 |---|---------|--------|-------------|--------------|
@@ -373,13 +373,25 @@ El repositorio incluye **cuatro archivos JSON de workflows** en `workflows/`, to
 | 2 | `conciliacion-excel.json` | Conciliación Excel | Webhook → excel-reconciler (POST /reconcile) → evaluar resultado → responder | RF-008 a RF-010 (base) |
 | 3 | `secuencias-email.json` | Secuencias Email | Schedule 15 min → detectar cambio HubSpot → Mailchimp tags → campaign_lead → automation_log | RF-003, RF-005 |
 | 4 | `alertas-financieras.json` | Alertas Financieras | Schedule cron → HTTP excel-reconciler → evaluar status → automation_log (exito/advertencia/error) → email admin | RF-008, RF-009, RF-010 |
+| 5 | `reporte-semanal.json` | Reporte Semanal | Schedule lunes 8:00 am (hora Colombia) → consulta automation_log → 4 indicadores (contactos, citas, negocios cerrados, flujos fallidos) → email usuario piloto → log en automation_log | RF-012 |
 
 Todos los workflows incluyen:
 - **Sin secretos hardcodeados**: credenciales vía gestor de n8n (`{{ $credentials }}`)
-- **Idempotencia**: verificación antes de crear duplicados en PostgreSQL y Mailchimp
+- **Idempotencia**: verificación antes de crear duplicados en PostgreSQL y Mailchimp (reporte-semanal verifica ejecución en últimas 12 horas)
 - **Datos sintéticos de prueba**: nodo `Set` separado para pruebas
 - **Ramas de error**: reintentos (30s, 60s, 120s), log en automation_log y email al administrador
 - **Nodo anotación**: documentación del propósito del workflow
+
+### Componentes de código personalizado (services/)
+
+| Componente | Descripción | RF/VS cubiertos |
+|------------|-------------|-----------------|
+| `services/excel-reconciler/` | Servicio de conciliación financiera (POST /reconcile vía Microsoft Graph) | RF-008 a RF-010 |
+| `services/hubspot/` | Wrapper para HubSpot API v3 (getContact, createContact, updateContact) | RF-001 a RF-005 |
+| `services/mailchimp/` | Wrapper para Mailchimp API v3 (addOrUpdateMember, addTag) | RF-001 a RF-005 |
+| `services/calendly/` | Wrapper para Calendly API v2 + validación HMAC webhooks | RF-001 a RF-005 |
+| `services/metrics/` | Componente de métricas VD1/VD2 (media, mediana, desviación estándar, reducción %) | VD1, VD2 (§2.4, §3.5) |
+| `services/dashboard/` | Generador de dashboard ejecutivo para Excel/OneDrive (4 bloques §4.4) | §4.4 |
 
 ### Flujo 1 — Captura y Calificación de Leads (Calendly → HubSpot → Mailchimp)
 

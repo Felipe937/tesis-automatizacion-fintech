@@ -1,0 +1,27 @@
+{
+  "name": "metrics-component",
+  "version": "1.0.0",
+  "description": "Componente de métricas para validar la hipótesis VD1/VD2 de la tesis IS25237 — Automatización Fintech",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/__tests__/calculator.test.js"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "keywords": [
+    "fintech",
+    "metrics",
+    "statistics",
+    "thesis",
+    "VD1",
+    "VD2"
+  ],
+  "author": "Tesis Automatización Fintech — Colombia",
+  "license": "MIT"
+}

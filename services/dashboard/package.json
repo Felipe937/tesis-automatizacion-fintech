@@ -1,0 +1,31 @@
+{
+  "name": "dashboard-component",
+  "version": "1.0.0",
+  "description": "Generador de dashboard ejecutivo para Excel/OneDrive — Tesis Automatización Fintech IS25237",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/__tests__/dashboard.test.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "axios-retry": "^4.5.0",
+    "@azure/msal-node": "^7.1.0",
+    "zod": "^4.6.7"
+  },
+  "keywords": [
+    "fintech",
+    "dashboard",
+    "excel",
+    "onedrive",
+    "microsoft-graph",
+    "n8n",
+    "thesis"
+  ],
+  "author": "Tesis Automatización Fintech — Colombia",
+  "license": "MIT"
+}

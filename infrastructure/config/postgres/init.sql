@@ -25,7 +25,7 @@ COMMENT ON DATABASE n8n_fintech IS
 -- TIPOS ENUM (antes de las tablas, por requerimiento de PostgreSQL)
 -- -----------------------------------------------------------------------------
 
-CREATE TYPE lead_estado AS ENUM (
+CREATE TYPE IF NOT EXISTS lead_estado AS ENUM (
   'nuevo',
   'prospecto',
   'cita_pendiente',
@@ -34,27 +34,27 @@ CREATE TYPE lead_estado AS ENUM (
   'inactivo'
 );
 
-CREATE TYPE campaign_estado AS ENUM (
+CREATE TYPE IF NOT EXISTS campaign_estado AS ENUM (
   'pendiente',
   'activa',
   'completada',
   'cancelada'
 );
 
-CREATE TYPE appointment_estado AS ENUM (
+CREATE TYPE IF NOT EXISTS appointment_estado AS ENUM (
   'pendiente',
   'confirmada',
   'cancelada',
   'completada'
 );
 
-CREATE TYPE investment_estado AS ENUM (
+CREATE TYPE IF NOT EXISTS investment_estado AS ENUM (
   'activa',
   'vencida',
   'cancelada'
 );
 
-CREATE TYPE log_estado AS ENUM (
+CREATE TYPE IF NOT EXISTS log_estado AS ENUM (
   'exito',
   'error',
   'advertencia'
@@ -64,7 +64,7 @@ CREATE TYPE log_estado AS ENUM (
 -- Tabla: lead
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE lead (
+CREATE TABLE IF NOT EXISTS lead (
   id_lead BIGSERIAL PRIMARY KEY,
   nombre VARCHAR(255) NOT NULL,
   correo_electronico VARCHAR(255) NOT NULL UNIQUE,
@@ -79,7 +79,7 @@ CREATE TABLE lead (
 -- Tabla: campaign
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE campaign (
+CREATE TABLE IF NOT EXISTS campaign (
   id_campaign BIGSERIAL PRIMARY KEY,
   nombre VARCHAR(255) NOT NULL,
   estado campaign_estado NOT NULL DEFAULT 'pendiente',
@@ -90,7 +90,7 @@ CREATE TABLE campaign (
 -- Tabla: appointment
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE appointment (
+CREATE TABLE IF NOT EXISTS appointment (
   id_appointment BIGSERIAL PRIMARY KEY,
   id_lead BIGINT NOT NULL REFERENCES lead(id_lead),
   fecha_hora_inicio TIMESTAMPTZ NOT NULL,
@@ -103,7 +103,7 @@ CREATE TABLE appointment (
 -- Tabla: investment
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE investment (
+CREATE TABLE IF NOT EXISTS investment (
   id_investment BIGSERIAL PRIMARY KEY,
   id_lead BIGINT NOT NULL REFERENCES lead(id_lead),
   monto NUMERIC(18,4) NOT NULL,
@@ -117,7 +117,7 @@ CREATE TABLE investment (
 -- Tabla: automation_log
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE automation_log (
+CREATE TABLE IF NOT EXISTS automation_log (
   id_log BIGSERIAL PRIMARY KEY,
   workflow_id VARCHAR(100) NOT NULL,
   timestamp_inicio TIMESTAMPTZ NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE automation_log (
 -- Tabla: campaign_lead (relación M:N entre campaign y lead)
 -- -----------------------------------------------------------------------------
 
-CREATE TABLE campaign_lead (
+CREATE TABLE IF NOT EXISTS campaign_lead (
   id_campaign BIGINT NOT NULL REFERENCES campaign(id_campaign),
   id_lead BIGINT NOT NULL REFERENCES lead(id_lead),
   PRIMARY KEY (id_campaign, id_lead)
@@ -142,13 +142,13 @@ CREATE TABLE campaign_lead (
 -- ÍNDICES
 -- -----------------------------------------------------------------------------
 
-CREATE INDEX idx_lead_correo_electronico ON lead(correo_electronico);
-CREATE INDEX idx_lead_id_hubspot ON lead(id_hubspot);
-CREATE INDEX idx_lead_estado ON lead(estado);
-CREATE INDEX idx_appointment_id_lead ON appointment(id_lead);
-CREATE INDEX idx_investment_id_lead ON investment(id_lead);
-CREATE INDEX idx_automation_log_workflow_id ON automation_log(workflow_id);
-CREATE INDEX idx_automation_log_timestamp_inicio ON automation_log(timestamp_inicio);
+CREATE INDEX IF NOT EXISTS idx_lead_correo_electronico ON lead(correo_electronico);
+CREATE INDEX IF NOT EXISTS idx_lead_id_hubspot ON lead(id_hubspot);
+CREATE INDEX IF NOT EXISTS idx_lead_estado ON lead(estado);
+CREATE INDEX IF NOT EXISTS idx_appointment_id_lead ON appointment(id_lead);
+CREATE INDEX IF NOT EXISTS idx_investment_id_lead ON investment(id_lead);
+CREATE INDEX IF NOT EXISTS idx_automation_log_workflow_id ON automation_log(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_automation_log_timestamp_inicio ON automation_log(timestamp_inicio);
 
 -- -----------------------------------------------------------------------------
 -- COMENTARIOS DE TABLA (auditoría, Ley 1581/2012)
